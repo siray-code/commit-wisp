@@ -15,7 +15,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
 crossterm = "0.29"
 directories = "6.0"
-keyring = "3.6"
+keyring = "4.1"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -24,7 +24,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tempfile = "3.15"
 tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "time"] }
-toml = "0.8"
+toml = "1.1"
 
 [dev-dependencies]
 assert_cmd = "2.0"
