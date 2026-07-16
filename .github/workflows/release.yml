@@ -1,0 +1,39 @@
+name: Release binaries
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: commit-wisp-linux-x86_64
+          - os: macos-14
+            artifact: commit-wisp-macos-aarch64
+          - os: windows-latest
+            artifact: commit-wisp-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        run: cp target/release/commit-wisp "${{ matrix.artifact }}"
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item target/release/commit-wisp.exe "${{ matrix.artifact }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
+          generate_release_notes: true
