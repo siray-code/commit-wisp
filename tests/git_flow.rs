@@ -35,7 +35,12 @@ fn reads_only_staged_changes_and_commits_reviewed_message() {
         .recent_commits(1)
         .expect("history")
         .contains("chore: initial"));
-    assert_eq!(repo.root(), temp.path());
+    assert_eq!(
+        repo.root()
+            .canonicalize()
+            .expect("canonical repository root"),
+        temp.path().canonicalize().expect("canonical temp path")
+    );
 
     repo.commit("feat: reviewed message", false)
         .expect("commit succeeds");
