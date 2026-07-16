@@ -18,10 +18,35 @@
 
 ## 安装与使用
 
+Homebrew：
+
+```sh
+brew install siray-code/tap/commit-wisp
+```
+
+macOS / 基于 glibc 的 Linux 一键安装（默认安装到 `~/.local/bin`，安装前校验 SHA-256）：
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.sh | sh
+```
+
+Windows PowerShell 一键安装（安装到当前用户目录并更新用户 `PATH`）：
+
+```powershell
+irm https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.ps1 | iex
+```
+
+可通过 `COMMIT_WISP_VERSION` 指定版本，通过 `COMMIT_WISP_INSTALL_DIR` 指定安装目录。也可以从 [Releases](https://github.com/siray-code/commit-wisp/releases) 手动下载并核对 `SHA256SUMS`。
+
 从源码构建需要 Rust 1.88 或更新版本：
 
 ```sh
-cargo install --path .
+cargo install --git https://github.com/siray-code/commit-wisp --locked
+```
+
+完成安装后：
+
+```sh
 commit-wisp setup
 
 git add src tests

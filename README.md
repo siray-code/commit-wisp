@@ -17,10 +17,34 @@ Reviewable, token-aware AI commit messages from your staged Git changes.
 
 ## Install
 
-Rust 1.88 or newer is required when building from source.
+### Homebrew
 
 ```sh
-cargo install --path .
+brew install siray-code/tap/commit-wisp
+```
+
+### One-line installer
+
+macOS and glibc-based Linux (installs to `~/.local/bin` and verifies the release checksum):
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.sh | sh
+```
+
+Windows PowerShell (installs to the current user's programs directory and updates user `PATH`):
+
+```powershell
+irm https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.ps1 | iex
+```
+
+Set `COMMIT_WISP_VERSION` to install a specific release, or `COMMIT_WISP_INSTALL_DIR` to choose a destination. Release archives and checksums are also available on the [Releases](https://github.com/siray-code/commit-wisp/releases) page.
+
+### Build from source
+
+Rust 1.88 or newer is required:
+
+```sh
+cargo install --git https://github.com/siray-code/commit-wisp --locked
 ```
 
 Then configure a cloud-compatible endpoint or local Ollama:
