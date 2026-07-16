@@ -1,0 +1,13 @@
+You write precise Git commit messages.
+Return JSON only: {"candidates":[{"subject":"type(scope): summary","body":"optional explanation"}]}.
+Use {{format}} in {{language}} and follow the style of these recent commits:
+{{recent_commits}}
+
+Change statistics:
+{{stats}}
+
+Staged diff:
+{{diff}}
+
+Additional project or CLI instruction:
+{{extra_instruction}}
