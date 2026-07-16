@@ -1,0 +1,34 @@
+class CommitWisp < Formula
+  desc "Reviewable, token-aware AI commit messages from staged changes"
+  homepage "https://github.com/siray-code/commit-wisp"
+  version "@VERSION@"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "@BASE_URL@/commit-wisp-aarch64-apple-darwin.tar.gz"
+      sha256 "@MAC_ARM_SHA@"
+    else
+      url "@BASE_URL@/commit-wisp-x86_64-apple-darwin.tar.gz"
+      sha256 "@MAC_INTEL_SHA@"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm?
+      url "@BASE_URL@/commit-wisp-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "@LINUX_ARM_SHA@"
+    else
+      url "@BASE_URL@/commit-wisp-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "@LINUX_INTEL_SHA@"
+    end
+  end
+
+  def install
+    bin.install "commit-wisp"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/commit-wisp --version")
+  end
+end
