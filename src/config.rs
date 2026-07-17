@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
     pub provider: String,
+    pub credential_store: String,
     pub model: String,
     pub base_url: String,
     pub language: String,
@@ -28,12 +29,13 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             provider: "openai-compatible".into(),
+            credential_store: "system".into(),
             model: "gpt-4.1-mini".into(),
             base_url: "https://api.openai.com/v1".into(),
             language: "en".into(),
             format: "conventional".into(),
             max_input_tokens: 12_000,
-            candidates: 3,
+            candidates: 1,
             timeout_seconds: 30,
             prompt_file: None,
         }
@@ -58,6 +60,7 @@ pub struct CliOverrides<'a> {
 #[derive(Debug, Default, Deserialize)]
 struct PartialConfig {
     provider: Option<String>,
+    credential_store: Option<String>,
     model: Option<String>,
     base_url: Option<String>,
     language: Option<String>,
@@ -101,6 +104,7 @@ impl Config {
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
         match key {
             "provider" => self.provider = value.into(),
+            "credential_store" => self.credential_store = value.into(),
             "model" => self.model = value.into(),
             "base_url" => self.base_url = value.into(),
             "language" => self.language = value.into(),
@@ -159,6 +163,7 @@ impl Config {
             };
         }
         apply!(provider);
+        apply!(credential_store);
         apply!(model);
         apply!(base_url);
         apply!(language);
@@ -174,6 +179,9 @@ impl Config {
     fn apply_env(&mut self, env: &HashMap<String, String>) -> Result<()> {
         if let Some(value) = env.get("COMMIT_WISP_PROVIDER") {
             self.provider.clone_from(value);
+        }
+        if let Some(value) = env.get("COMMIT_WISP_CREDENTIAL_STORE") {
+            self.credential_store.clone_from(value);
         }
         if let Some(value) = env.get("COMMIT_WISP_MODEL") {
             self.model.clone_from(value);
@@ -196,6 +204,10 @@ impl Config {
         anyhow::ensure!(
             matches!(self.provider.as_str(), "openai-compatible" | "ollama"),
             "provider must be openai-compatible or ollama"
+        );
+        anyhow::ensure!(
+            matches!(self.credential_store.as_str(), "system" | "file"),
+            "credential_store must be system or file"
         );
         anyhow::ensure!(!self.model.trim().is_empty(), "model cannot be empty");
         anyhow::ensure!(
@@ -236,6 +248,7 @@ mod tests {
         let mut config = Config::default();
         for (key, value) in [
             ("provider", "ollama"),
+            ("credential_store", "file"),
             ("model", "qwen3"),
             ("base_url", "http://localhost:11434"),
             ("language", "zh"),

@@ -1,5 +1,7 @@
 //! Command-line surface.
 
+use std::path::PathBuf;
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
@@ -46,6 +48,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Inspect and manage the commit-message prompt template.
+    Prompt {
+        #[command(subcommand)]
+        action: PromptAction,
+    },
     /// Check Git, configuration, credentials, and provider connectivity.
     Doctor,
     /// Generate shell completion scripts.
@@ -60,6 +67,8 @@ pub struct SetupArgs {
     pub base_url: Option<String>,
     #[arg(long)]
     pub model: Option<String>,
+    #[arg(long)]
+    pub credential_store: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -67,6 +76,22 @@ pub enum ConfigAction {
     List,
     Get { key: String },
     Set { key: String, value: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PromptAction {
+    /// Print the active prompt template and its source.
+    Show,
+    /// Create and activate a customizable prompt template.
+    Init {
+        path: Option<PathBuf>,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Edit the active prompt template with the configured or system editor.
+    Edit,
+    /// Restore the built-in prompt without deleting custom files.
+    Reset,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

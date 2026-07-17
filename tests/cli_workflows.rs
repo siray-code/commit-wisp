@@ -219,3 +219,137 @@ fn setup_reuses_environment_key_without_exposing_or_persisting_it() {
         .success()
         .stdout(predicate::str::contains(secret).not());
 }
+
+#[test]
+fn credential_store_configuration_is_visible_without_exposing_credentials() {
+    let home = tempfile::tempdir().expect("config home");
+    let secret = "test-only-file-credential";
+
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["config", "set", "credential_store", "file"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success();
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["config", "list"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env("COMMIT_WISP_API_KEY", secret)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("credential_store = \"file\""))
+        .stdout(predicate::str::contains(secret).not());
+}
+
+#[test]
+fn prompt_commands_initialize_show_and_reset_a_global_template() {
+    let home = tempfile::tempdir().expect("config home");
+
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "show"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Prompt source: built-in"))
+        .stdout(predicate::str::contains("{{diff}}"));
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "init"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("prompt.txt"));
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "init"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--force"));
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "show"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Prompt source:").and(predicate::str::contains("prompt.txt")),
+        );
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "reset"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success();
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "show"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Prompt source: built-in"));
+}
+
+#[cfg(unix)]
+#[test]
+fn prompt_edit_validates_and_restores_invalid_edits() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("config home");
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "init"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success();
+
+    let editor = home.path().join("editor.sh");
+    fs::write(
+        &editor,
+        "#!/bin/sh\nprintf 'Custom {{diff}} template\\n' > \"$1\"\n",
+    )
+    .expect("write editor");
+    fs::set_permissions(&editor, fs::Permissions::from_mode(0o700)).expect("editor permissions");
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "edit"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env("EDITOR", &editor)
+        .assert()
+        .success();
+
+    fs::write(
+        &editor,
+        "#!/bin/sh\nprintf 'invalid template\\n' > \"$1\"\n",
+    )
+    .expect("rewrite editor");
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "edit"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env("EDITOR", &editor)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("previous template was restored"));
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["prompt", "show"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Custom {{diff}} template"));
+}

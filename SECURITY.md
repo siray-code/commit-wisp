@@ -6,8 +6,9 @@ Do not open a public issue for a vulnerability or include real credentials, prop
 
 ## Credential and diff handling
 
-- API keys are read from `COMMIT_WISP_API_KEY` or the operating-system credential store.
+- API keys are read from `COMMIT_WISP_API_KEY`, the operating-system credential store, or the explicitly selected file credential store.
 - TOML configuration does not contain a key field.
+- File-store credentials live in a separate plaintext `credentials.toml`. Unix permissions are forced to `0600`, but this mode is less protective than the operating-system credential store and should be enabled only as an explicit convenience tradeoff.
 - Added diff lines are scanned before provider creation and network access.
 - Findings contain only filename, diff line, and rule identifier.
 - `--allow-sensitive` is an explicit escape hatch and sends the resulting payload unchanged.

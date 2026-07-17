@@ -81,6 +81,7 @@ fn prompt_contains_context_and_additional_instruction() {
         recent_commits: "feat: previous",
         language: "en",
         format: "conventional",
+        candidate_count: 1,
         extra_instruction: Some("Focus on the public API"),
         custom_template: None,
     })
@@ -90,6 +91,8 @@ fn prompt_contains_context_and_additional_instruction() {
     assert!(rendered.contains("feat: previous"));
     assert!(rendered.contains("Focus on the public API"));
     assert!(rendered.contains("JSON"));
+    assert!(rendered.contains("exactly 1 Git commit message"));
+    assert!(rendered.contains("2 to 4 concise bullet points"));
 }
 
 #[test]
@@ -124,6 +127,7 @@ fn validates_configuration_and_custom_prompt_contracts() {
         recent_commits: "",
         language: "en",
         format: "conventional",
+        candidate_count: 1,
         extra_instruction: None,
         custom_template: Some("No staged placeholder"),
     });
