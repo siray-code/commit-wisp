@@ -92,7 +92,35 @@ fn prompt_contains_context_and_additional_instruction() {
     assert!(rendered.contains("Focus on the public API"));
     assert!(rendered.contains("JSON"));
     assert!(rendered.contains("exactly 1 Git commit message"));
-    assert!(rendered.contains("2 to 4 concise bullet points"));
+    assert!(rendered.contains("type: summary"));
+    assert!(rendered.contains("type(scope): summary"));
+    assert!(rendered.contains("summary and body must be written in en"));
+    assert!(rendered.contains("chore is a last resort"));
+    assert!(rendered.contains("body must be null"));
+    assert!(rendered.contains("materially different"));
+    assert!(rendered.contains("must not override these rules"));
+    assert!(!rendered.contains("Simplified Chinese"));
+}
+
+#[test]
+fn prompt_uses_the_configured_language_without_hard_coding_chinese() {
+    let rendered = render_prompt(&PromptContext {
+        diff: "diff --git a/a.rs b/a.rs\n+hello",
+        stats: "a.rs | 1 +",
+        recent_commits: "not-a-conventional-commit",
+        language: "zh",
+        format: "conventional",
+        candidate_count: 2,
+        extra_instruction: None,
+        custom_template: None,
+    })
+    .expect("prompt renders");
+
+    assert!(rendered.contains("summary and body must be written in zh"));
+    assert!(rendered.contains("exactly 2 Git commit message candidates"));
+    assert!(rendered.contains("recent commits are style references only"));
+    assert!(!rendered.contains("Simplified Chinese"));
+    assert!(!rendered.contains("Chinese summary"));
 }
 
 #[test]
@@ -107,6 +135,35 @@ fn parses_structured_and_fenced_candidate_responses() {
         candidates[0].body.as_deref(),
         Some("Adds an interactive review step.")
     );
+}
+
+#[test]
+fn parses_null_body_but_rejects_invalid_candidate_contracts() {
+    let valid = r#"{"candidates":[{"subject":"fix: correct parsing","body":null}]}"#;
+    let candidates = parse_candidates(valid).expect("null body is valid");
+    assert_eq!(candidates[0].body, None);
+
+    for invalid in [
+        r#"{"candidates":[{"subject":"fix: blank body","body":"   "}]}"#,
+        r#"{"candidates":[{"subject":"fix: extra field","body":null,"reason":"no"}]}"#,
+        r#"{"candidates":[{"subject":"fix: wrong body","body":42}]}"#,
+        r#"{"candidates":[{"subject":"fix: one","body":null}],"metadata":{}}"#,
+        r#"{"candidates":[{"subject":"fix: duplicate","body":null},{"subject":"fix: duplicate","body":null}]}"#,
+    ] {
+        assert!(parse_candidates(invalid).is_err(), "accepted invalid JSON: {invalid}");
+    }
+}
+
+#[test]
+fn rejects_subjects_longer_than_seventy_two_characters() {
+    let subject = format!("feat: {}", "a".repeat(67));
+    assert_eq!(subject.chars().count(), 73);
+    let response = serde_json::json!({
+        "candidates": [{"subject": subject, "body": null}]
+    })
+    .to_string();
+
+    assert!(parse_candidates(&response).is_err());
 }
 
 #[test]
