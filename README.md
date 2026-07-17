@@ -85,7 +85,15 @@ commit-wisp completions zsh > _commit-wisp
 
 ### OpenAI-compatible
 
-This covers OpenAI, OpenRouter, DeepSeek, Groq, and compatible gateways. The default endpoint is `https://api.openai.com/v1`. `setup` stores the key in Keychain, Credential Manager, or Secret Service. For ephemeral/CI use:
+This covers OpenAI, OpenRouter, DeepSeek, Groq, and compatible gateways. The default endpoint is `https://api.openai.com/v1`. By default, `setup` stores the key in Keychain, Credential Manager, or Secret Service. On macOS, choose **Always Allow** for a stable installed binary. Locally rebuilt ad-hoc binaries may be treated as a new application after each build.
+
+To avoid system credential prompts, explicitly select the file store during `setup` or run:
+
+```sh
+commit-wisp setup --credential-store file
+```
+
+File-store credentials are plaintext in a separate `credentials.toml`, protected with user-only (`0600`) permissions on Unix. They never appear in regular configuration output. For ephemeral/CI use:
 
 ```sh
 export COMMIT_WISP_API_KEY='...'
@@ -108,7 +116,19 @@ Plain HTTP provider URLs are rejected unless they target `localhost` or `127.0.0
 
 Precedence is CLI > `COMMIT_WISP_*` environment > repository `.commit-wisp.toml` > global configuration > defaults. See [`examples/commit-wisp.toml`](examples/commit-wisp.toml).
 
-Project prompt templates can use `{{diff}}`, `{{stats}}`, `{{recent_commits}}`, `{{language}}`, `{{format}}`, and `{{extra_instruction}}`. A custom template must include `{{diff}}`; see [`examples/prompt.txt`](examples/prompt.txt).
+Project prompt templates can use `{{diff}}`, `{{stats}}`, `{{recent_commits}}`, `{{language}}`, `{{format}}`, `{{candidate_count}}`, and `{{extra_instruction}}`. A custom template must include `{{diff}}`; see [`examples/prompt.txt`](examples/prompt.txt). The default template produces one Conventional Commit with an English type/scope, a concise Simplified Chinese summary, and a 2–4 item Chinese body grounded in the staged changes.
+
+Prompt templates are directly manageable from the CLI:
+
+```sh
+commit-wisp prompt show
+commit-wisp prompt init
+commit-wisp prompt edit
+commit-wisp prompt reset
+```
+
+`prompt init` creates a global `prompt.txt` by default. `--prompt "instruction"` remains a one-run addition and does not replace the configured template.
+`prompt edit` follows Git's editor configuration and falls back to the system editor when none is configured.
 
 Diff compression is deterministic and local. Lockfiles, minified files, and generated content are represented by filename/statistics; remaining files are independently budgeted so one large file cannot hide the rest. Token counts are provider-independent estimates.
 

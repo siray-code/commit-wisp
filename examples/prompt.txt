@@ -1,6 +1,14 @@
-You write precise Git commit messages.
-Return JSON only: {"candidates":[{"subject":"type(scope): summary","body":"optional explanation"}]}.
-Use {{format}} in {{language}} and follow the style of these recent commits:
+Generate exactly {{candidate_count}} Git commit message candidate based only on the staged changes.
+Each subject must use this format: <type>(<scope>): <Chinese summary>.
+The type must be one of feat, fix, build, chore, ci, docs, style, refactor, perf, test.
+The scope is optional; when present, keep it in English lowercase.
+Write the summary in Simplified Chinese using a concise verb-object structure.
+Each candidate must include a non-empty Simplified Chinese body with 2 to 4 concise bullet points.
+Use the body to explain the concrete changes, motivation, user-visible impact, and verification when the staged changes provide evidence for them.
+Do not repeat the subject in the body, invent facts, or mention details that cannot be inferred from the staged changes.
+Return JSON only: {"candidates":[{"subject":"feat(scope): 中文动宾摘要","body":"- 说明核心改动\\n- 说明影响或验证"}]}.
+
+Follow the style of these recent commits when it does not conflict with the required format:
 {{recent_commits}}
 
 Change statistics:

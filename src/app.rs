@@ -3,19 +3,21 @@
 use std::{
     fs,
     io::{self, IsTerminal, Write},
+    path::{Path, PathBuf},
+    process::Command as ProcessCommand,
 };
 
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 
 use crate::{
-    cli::{Cli, Commands, CompletionShell, ConfigAction, SetupArgs},
+    cli::{Cli, Commands, CompletionShell, ConfigAction, PromptAction, SetupArgs},
     compress::{compress_diff, CompressionOptions},
-    config::{CliOverrides, Config},
+    config::{global_config_path, CliOverrides, Config},
     git::GitRepo,
-    prompt::{render_prompt, PromptContext},
+    prompt::{default_template, render_prompt, validate_template, PromptContext},
     provider::{validate_endpoint, LlmProvider, OllamaProvider, OpenAiProvider},
-    secret::SystemSecretStore,
+    secret::SecretStore,
     security::scan_sensitive,
     tui::{self, ReviewAction, ReviewInput},
 };
@@ -25,6 +27,7 @@ pub async fn run() -> Result<()> {
     match &cli.command {
         Some(Commands::Setup(args)) => setup(args).await,
         Some(Commands::Config { action }) => config_command(action),
+        Some(Commands::Prompt { action }) => prompt_command(action),
         Some(Commands::Doctor) => doctor(&cli).await,
         Some(Commands::Completions { shell }) => {
             completions(*shell);
@@ -75,6 +78,7 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
         recent_commits: &recent,
         language: &config.language,
         format: &config.format,
+        candidate_count: config.candidates,
         extra_instruction: cli.prompt.as_deref(),
         custom_template: custom_template.as_deref(),
     })?;
@@ -129,7 +133,7 @@ fn create_provider(config: &Config) -> Result<Box<dyn LlmProvider>> {
             config.timeout_seconds,
         )?)),
         "openai-compatible" => {
-            let key = SystemSecretStore::get(&config.provider)?;
+            let key = SecretStore::get(&config.credential_store, &config.provider)?;
             anyhow::ensure!(
                 key.is_some(),
                 "No API key configured. Run commit-wisp setup or set COMMIT_WISP_API_KEY."
@@ -167,13 +171,35 @@ async fn setup(args: &SetupArgs) -> Result<()> {
     config.set("base_url", &base_url)?;
     validate_endpoint(&config.base_url)?;
 
+    if config.provider == "openai-compatible" {
+        let credential_store = args.credential_store.clone().unwrap_or(prompt_value(
+            "Credential store (system/file)",
+            &config.credential_store,
+        )?);
+        config.set("credential_store", &credential_store)?;
+        if config.credential_store == "file" {
+            eprintln!(
+                "warning: file credentials are plaintext protected by user-only file permissions"
+            );
+        }
+    } else if let Some(credential_store) = &args.credential_store {
+        config.set("credential_store", credential_store)?;
+    }
+
     // Keep confirmed non-secret values even if credential setup fails later.
     let path = config.save_global()?;
 
     if config.provider == "openai-compatible" {
-        let has_existing_key = SystemSecretStore::get(&config.provider)?.is_some();
+        let has_existing_key =
+            SecretStore::get(&config.credential_store, &config.provider)?.is_some();
         if let Some(key) = prompt_api_key(has_existing_key)? {
-            SystemSecretStore::set(&config.provider, &key)?;
+            SecretStore::set(&config.credential_store, &config.provider, &key)?;
+        }
+        #[cfg(target_os = "macos")]
+        if config.credential_store == "system" {
+            println!(
+                "macOS Keychain: choose Always Allow for stable installed binaries; local rebuilds may require authorization again."
+            );
         }
     }
     let provider = create_provider(&config)?;
@@ -201,6 +227,7 @@ async fn setup(args: &SetupArgs) -> Result<()> {
     config.set("model", &model)?;
     config.save_global()?;
     println!("Saved non-secret configuration to {}", path.display());
+    print_prompt_summary(&config);
     Ok(())
 }
 
@@ -261,6 +288,151 @@ fn config_command(action: &ConfigAction) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn prompt_command(action: &PromptAction) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let mut config = Config::load(&cwd, CliOverrides::default())?;
+    match action {
+        PromptAction::Show => {
+            let (source, template) = active_prompt_template(&config, &cwd)?;
+            println!("Prompt source: {source}\n");
+            print!("{template}");
+        }
+        PromptAction::Init { path, force } => {
+            let path = initialize_prompt(&mut config, &cwd, path.as_deref(), *force)?;
+            println!(
+                "Initialized and activated prompt template at {}",
+                path.display()
+            );
+        }
+        PromptAction::Edit => {
+            let path = match config.prompt_file.as_deref() {
+                Some(path) => resolve_prompt_path(&cwd, Path::new(path)),
+                None => {
+                    let path = default_prompt_path()?;
+                    if path.exists() {
+                        config.set("prompt_file", &path.to_string_lossy())?;
+                        config.save_global()?;
+                        path
+                    } else {
+                        initialize_prompt(&mut config, &cwd, None, false)?
+                    }
+                }
+            };
+            edit_prompt(&path)?;
+            println!("Updated prompt template at {}", path.display());
+        }
+        PromptAction::Reset => {
+            config.set("prompt_file", "")?;
+            let path = config.save_global()?;
+            println!(
+                "Restored the built-in prompt; custom files were not deleted ({})",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn initialize_prompt(
+    config: &mut Config,
+    cwd: &Path,
+    requested_path: Option<&Path>,
+    force: bool,
+) -> Result<PathBuf> {
+    let path = requested_path
+        .map(|path| resolve_prompt_path(cwd, path))
+        .map_or_else(default_prompt_path, Ok)?;
+    if path.exists() && !force {
+        anyhow::bail!(
+            "Prompt template already exists at {}; use --force to overwrite it",
+            path.display()
+        );
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("Could not create prompt directory")?;
+    }
+    fs::write(&path, default_template()).context("Could not write prompt template")?;
+    config.set("prompt_file", &path.to_string_lossy())?;
+    config.save_global()?;
+    Ok(path)
+}
+
+fn default_prompt_path() -> Result<PathBuf> {
+    Ok(global_config_path()?.with_file_name("prompt.txt"))
+}
+
+fn edit_prompt(path: &Path) -> Result<()> {
+    let original = fs::read_to_string(path).context("Could not read prompt template")?;
+    let (program, arguments) = prompt_editor();
+    let status = ProcessCommand::new(program)
+        .args(arguments)
+        .arg(path)
+        .status()
+        .context("Could not launch prompt editor")?;
+    anyhow::ensure!(status.success(), "Prompt editor exited unsuccessfully");
+    let edited = fs::read_to_string(path).context("Could not read edited prompt template")?;
+    if let Err(error) = validate_template(&edited) {
+        fs::write(path, original).context("Could not restore the previous prompt template")?;
+        return Err(error).context("Invalid prompt edit; previous template was restored");
+    }
+    Ok(())
+}
+
+fn prompt_editor() -> (String, Vec<String>) {
+    if let Ok(output) = ProcessCommand::new("git")
+        .args(["var", "GIT_EDITOR"])
+        .output()
+    {
+        if output.status.success() {
+            let configured = String::from_utf8_lossy(&output.stdout);
+            if let Some(editor) = parse_editor_command(configured.trim()) {
+                return editor;
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    return ("open".into(), vec!["-W".into(), "-t".into()]);
+    #[cfg(target_os = "windows")]
+    return ("notepad.exe".into(), Vec::new());
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    ("vi".into(), Vec::new())
+}
+
+fn parse_editor_command(value: &str) -> Option<(String, Vec<String>)> {
+    let mut parts = value.split_whitespace();
+    let program = parts.next()?.to_owned();
+    Some((program, parts.map(str::to_owned).collect()))
+}
+
+fn active_prompt_template(config: &Config, cwd: &Path) -> Result<(String, String)> {
+    match config.prompt_file.as_deref() {
+        Some(path) => {
+            let path = resolve_prompt_path(cwd, Path::new(path));
+            let template = fs::read_to_string(&path).context("Could not read prompt_file")?;
+            validate_template(&template)?;
+            Ok((path.display().to_string(), template))
+        }
+        None => Ok(("built-in".into(), default_template().into())),
+    }
+}
+
+fn resolve_prompt_path(cwd: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.into()
+    } else {
+        cwd.join(path)
+    }
+}
+
+fn print_prompt_summary(config: &Config) {
+    match config.prompt_file.as_deref() {
+        Some(path) => println!("Prompt template: {path}"),
+        None => println!("Prompt template: built-in"),
+    }
+    println!("Manage templates with `commit-wisp prompt show|init|edit|reset`; use --prompt for a one-time instruction.");
 }
 
 async fn doctor(cli: &Cli) -> Result<()> {
@@ -329,6 +501,7 @@ fn prompt_value(label: &str, default: &str) -> Result<String> {
 fn config_value(config: &Config, key: &str) -> Result<String> {
     Ok(match key {
         "provider" => config.provider.clone(),
+        "credential_store" => config.credential_store.clone(),
         "model" => config.model.clone(),
         "base_url" => config.base_url.clone(),
         "language" => config.language.clone(),
@@ -353,6 +526,7 @@ mod tests {
         };
         for key in [
             "provider",
+            "credential_store",
             "model",
             "base_url",
             "language",
@@ -422,5 +596,14 @@ mod tests {
             "http://localhost:11434"
         );
         assert!(default_base_url("unsupported").is_err());
+    }
+
+    #[test]
+    fn parses_editor_commands_with_arguments() {
+        assert_eq!(
+            parse_editor_command("code --wait"),
+            Some(("code".into(), vec!["--wait".into()]))
+        );
+        assert_eq!(parse_editor_command("  "), None);
     }
 }

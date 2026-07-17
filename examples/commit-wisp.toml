@@ -1,10 +1,11 @@
 provider = "openai-compatible"
+credential_store = "system"
 model = "gpt-4.1-mini"
 base_url = "https://api.openai.com/v1"
 language = "en"
 format = "conventional"
 max_input_tokens = 12000
-candidates = 3
+candidates = 1
 timeout_seconds = 30
 # prompt_file = ".commit-wisp-prompt.txt"
 
