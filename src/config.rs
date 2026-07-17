@@ -29,13 +29,13 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             provider: "openai-compatible".into(),
-            credential_store: "system".into(),
+            credential_store: "file".into(),
             model: "gpt-4.1-mini".into(),
             base_url: "https://api.openai.com/v1".into(),
             language: "en".into(),
             format: "conventional".into(),
             max_input_tokens: 12_000,
-            candidates: 1,
+            candidates: 2,
             timeout_seconds: 30,
             prompt_file: None,
         }
