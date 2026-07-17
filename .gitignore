@@ -9,3 +9,5 @@
 !.env.example
 *.pem
 *.key
+.tokensave
+.codegraph
