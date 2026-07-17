@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -108,7 +109,6 @@ impl OpenAiProvider {
 struct OpenAiRequest<'a> {
     model: &'a str,
     messages: Vec<Message<'a>>,
-    n: usize,
     temperature: f32,
 }
 
@@ -146,27 +146,26 @@ struct OpenAiModel {
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
     async fn generate(&self, prompt: &str, count: usize) -> Result<Vec<Candidate>> {
+        let prompt = candidate_prompt(prompt, count);
         let body = OpenAiRequest {
             model: &self.model,
             messages: vec![Message {
                 role: "user",
-                content: prompt,
+                content: &prompt,
             }],
-            n: count,
             temperature: 0.2,
         };
         let request = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .json(&body);
-        let response: OpenAiResponse = self
+        let response = self
             .authenticated(request)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
             .await
-            .context("Invalid OpenAI-compatible response")?;
+            .context("Could not reach the OpenAI-compatible provider")?;
+        let response: OpenAiResponse =
+            decode_response(response, "Invalid OpenAI-compatible response").await?;
         let mut candidates = Vec::new();
         for choice in response.choices {
             candidates.extend(parse_candidates(&choice.message.content)?);
@@ -177,13 +176,9 @@ impl LlmProvider for OpenAiProvider {
 
     async fn models(&self) -> Result<Vec<String>> {
         let request = self.client.get(format!("{}/models", self.base_url));
-        let response: OpenAiModels = self
-            .authenticated(request)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let response = self.authenticated(request).send().await?;
+        let response: OpenAiModels =
+            decode_response(response, "Invalid OpenAI-compatible models response").await?;
         let mut models: Vec<_> = response.data.into_iter().map(|model| model.id).collect();
         models.sort();
         Ok(models)
@@ -239,38 +234,35 @@ struct OllamaModel {
 
 #[async_trait]
 impl LlmProvider for OllamaProvider {
-    async fn generate(&self, prompt: &str, _count: usize) -> Result<Vec<Candidate>> {
+    async fn generate(&self, prompt: &str, count: usize) -> Result<Vec<Candidate>> {
+        let prompt = candidate_prompt(prompt, count);
         let body = OllamaRequest {
             model: &self.model,
             messages: vec![Message {
                 role: "user",
-                content: prompt,
+                content: &prompt,
             }],
             stream: false,
             format: "json",
         };
-        let response: OllamaResponse = self
+        let response = self
             .client
             .post(format!("{}/api/chat", self.base_url))
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
-            .context("Invalid Ollama response")?;
+            .await?;
+        let response: OllamaResponse = decode_response(response, "Invalid Ollama response").await?;
         parse_candidates(&response.message.content)
     }
 
     async fn models(&self) -> Result<Vec<String>> {
-        let response: OllamaModels = self
+        let response = self
             .client
             .get(format!("{}/api/tags", self.base_url))
             .send()
-            .await?
-            .error_for_status()?
-            .json()
             .await?;
+        let response: OllamaModels =
+            decode_response(response, "Invalid Ollama models response").await?;
         let mut models: Vec<_> = response
             .models
             .into_iter()
@@ -282,6 +274,47 @@ impl LlmProvider for OllamaProvider {
 
     fn model(&self) -> &str {
         &self.model
+    }
+}
+
+fn candidate_prompt(prompt: &str, count: usize) -> String {
+    format!("{prompt}\nReturn exactly {count} candidates in the candidates array.\n")
+}
+
+async fn decode_response<T: DeserializeOwned>(
+    response: reqwest::Response,
+    invalid_context: &'static str,
+) -> Result<T> {
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        let detail = provider_error_detail(&body);
+        anyhow::bail!("Provider returned {status}: {detail}");
+    }
+    response.json().await.context(invalid_context)
+}
+
+fn provider_error_detail(body: &str) -> String {
+    let parsed = serde_json::from_str::<serde_json::Value>(body).ok();
+    let detail = parsed
+        .as_ref()
+        .and_then(|value| {
+            value
+                .pointer("/error/message")
+                .or_else(|| value.get("message"))
+        })
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(body)
+        .trim();
+    let cleaned: String = detail
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(500)
+        .collect();
+    if cleaned.is_empty() {
+        "No error details returned".into()
+    } else {
+        cleaned
     }
 }
 
