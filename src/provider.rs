@@ -285,7 +285,7 @@ impl LlmProvider for OllamaProvider {
     }
 }
 
-fn validate_endpoint(base_url: &str) -> Result<()> {
+pub(crate) fn validate_endpoint(base_url: &str) -> Result<()> {
     anyhow::ensure!(
         base_url.starts_with("https://")
             || base_url.starts_with("http://localhost")

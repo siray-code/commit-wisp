@@ -14,7 +14,7 @@ use crate::{
     config::{CliOverrides, Config},
     git::GitRepo,
     prompt::{render_prompt, PromptContext},
-    provider::{LlmProvider, OllamaProvider, OpenAiProvider},
+    provider::{validate_endpoint, LlmProvider, OllamaProvider, OpenAiProvider},
     secret::SystemSecretStore,
     security::scan_sensitive,
     tui::{self, ReviewAction, ReviewInput},
@@ -148,29 +148,37 @@ fn create_provider(config: &Config) -> Result<Box<dyn LlmProvider>> {
 async fn setup(args: &SetupArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let mut config = Config::load(&cwd, CliOverrides::default())?;
-    config.provider = args.provider.clone().unwrap_or(prompt_value(
+    let previous_provider = config.provider.clone();
+    let provider = args.provider.clone().unwrap_or(prompt_value(
         "Provider (openai-compatible/ollama)",
         &config.provider,
     )?);
-    let default_url = if config.provider == "ollama" {
-        "http://localhost:11434"
+    config.set("provider", &provider)?;
+
+    let default_url = if config.provider == previous_provider {
+        config.base_url.clone()
     } else {
-        &config.base_url
+        default_base_url(&config.provider)?.into()
     };
-    config.base_url = args
+    let base_url = args
         .base_url
         .clone()
-        .unwrap_or(prompt_value("Base URL", default_url)?);
+        .unwrap_or(prompt_value("Base URL", &default_url)?);
+    config.set("base_url", &base_url)?;
+    validate_endpoint(&config.base_url)?;
+
+    // Keep confirmed non-secret values even if credential setup fails later.
+    let path = config.save_global()?;
 
     if config.provider == "openai-compatible" {
-        let key = rpassword::prompt_password("API key (stored in system credential store): ")?;
-        if !key.trim().is_empty() {
+        let has_existing_key = SystemSecretStore::get(&config.provider)?.is_some();
+        if let Some(key) = prompt_api_key(has_existing_key)? {
             SystemSecretStore::set(&config.provider, &key)?;
         }
     }
     let provider = create_provider(&config)?;
-    if let Ok(models) = provider.models().await {
-        if !models.is_empty() {
+    match provider.models().await {
+        Ok(models) if !models.is_empty() => {
             println!(
                 "Available models (first 12): {}",
                 models
@@ -181,14 +189,63 @@ async fn setup(args: &SetupArgs) -> Result<()> {
                     .join(", ")
             );
         }
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!("warning: Could not list provider models: {error:#}");
+        }
     }
-    config.model = args
+    let model = args
         .model
         .clone()
         .unwrap_or(prompt_value("Model", &config.model)?);
-    let path = config.save_global()?;
+    config.set("model", &model)?;
+    config.save_global()?;
     println!("Saved non-secret configuration to {}", path.display());
     Ok(())
+}
+
+fn default_base_url(provider: &str) -> Result<&'static str> {
+    match provider {
+        "openai-compatible" => Ok("https://api.openai.com/v1"),
+        "ollama" => Ok("http://localhost:11434"),
+        _ => anyhow::bail!("Unsupported provider: {provider}"),
+    }
+}
+
+fn prompt_api_key(has_existing_key: bool) -> Result<Option<String>> {
+    if !io::stdin().is_terminal() {
+        anyhow::ensure!(
+            has_existing_key,
+            "No API key configured. Run commit-wisp setup in an interactive terminal or set COMMIT_WISP_API_KEY."
+        );
+        return Ok(None);
+    }
+
+    loop {
+        let prompt = if has_existing_key {
+            "API key (hidden; press Enter to keep the existing credential): "
+        } else {
+            "API key (hidden; stored in system credential store): "
+        };
+        let key = rpassword::prompt_password(prompt)?;
+        match resolve_api_key_input(&key, has_existing_key) {
+            Ok(action) => return Ok(action),
+            Err(error) => eprintln!("{error}"),
+        }
+    }
+}
+
+fn resolve_api_key_input(value: &str, has_existing_key: bool) -> Result<Option<String>> {
+    let value = value.trim();
+    if value.is_empty() {
+        anyhow::ensure!(
+            has_existing_key,
+            "API key is required; enter a value or press Ctrl-C to cancel."
+        );
+        Ok(None)
+    } else {
+        Ok(Some(value.into()))
+    }
 }
 
 fn config_command(action: &ConfigAction) -> Result<()> {
@@ -337,5 +394,33 @@ mod tests {
             create_provider(&config).expect("ollama provider").model(),
             "qwen3"
         );
+    }
+
+    #[test]
+    fn api_key_input_replaces_keeps_or_rejects_as_expected() {
+        assert_eq!(
+            resolve_api_key_input("  new-secret  ", false)
+                .expect("new credential")
+                .as_deref(),
+            Some("new-secret")
+        );
+        assert_eq!(
+            resolve_api_key_input("", true).expect("keep credential"),
+            None
+        );
+        assert!(resolve_api_key_input("  ", false).is_err());
+    }
+
+    #[test]
+    fn provider_switches_use_provider_defaults() {
+        assert_eq!(
+            default_base_url("openai-compatible").expect("OpenAI-compatible URL"),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            default_base_url("ollama").expect("Ollama URL"),
+            "http://localhost:11434"
+        );
+        assert!(default_base_url("unsupported").is_err());
     }
 }

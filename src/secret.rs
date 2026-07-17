@@ -12,7 +12,14 @@ impl SystemSecretStore {
         keyring::Entry::new(SERVICE, provider)
             .context("Could not open the system credential store")?
             .set_password(value)
-            .context("Could not save API key in the system credential store")
+            .context("Could not save API key in the system credential store")?;
+
+        let persisted = Self::get_stored(provider)?;
+        anyhow::ensure!(
+            persisted.as_deref() == Some(value),
+            "The system credential store did not persist the API key"
+        );
+        Ok(())
     }
 
     pub fn get(provider: &str) -> Result<Option<String>> {
@@ -21,6 +28,10 @@ impl SystemSecretStore {
                 return Ok(Some(value));
             }
         }
+        Self::get_stored(provider)
+    }
+
+    fn get_stored(provider: &str) -> Result<Option<String>> {
         let entry = keyring::Entry::new(SERVICE, provider)
             .context("Could not open the system credential store")?;
         match entry.get_password() {
