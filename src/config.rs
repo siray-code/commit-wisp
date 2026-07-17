@@ -227,6 +227,9 @@ impl Config {
 }
 
 pub fn global_config_path() -> Result<PathBuf> {
+    if let Some(root) = std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(root).join("commit-wisp").join("config.toml"));
+    }
     let dirs = ProjectDirs::from("dev", "commit-wisp", "commit-wisp")
         .context("Could not determine user configuration directory")?;
     Ok(dirs.config_dir().join("config.toml"))
