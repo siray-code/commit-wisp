@@ -42,7 +42,7 @@ fn provider_server(requests: usize) -> (String, thread::JoinHandle<Vec<String>>)
                 let response = if request.starts_with("GET /models") {
                     r#"{"data":[{"id":"test-model"},{"id":"other-model"}]}"#
                 } else {
-                    r#"{"choices":[{"message":{"content":"{\"candidates\":[{\"subject\":\"feat(cli): generated safely\",\"body\":\"Describes staged changes.\"}]}"}}]}"#
+                    r#"{"choices":[{"message":{"content":"{\"candidates\":[{\"subject\":\"feat(cli): generated safely\",\"body\":\"Describes staged changes.\"},{\"subject\":\"feat: expose generated feature\",\"body\":null},{\"subject\":\"feat(api): add public feature\",\"body\":null}]}"}}]}"#
                 };
                 write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).expect("write response");
                 request
@@ -55,11 +55,16 @@ fn provider_server(requests: usize) -> (String, thread::JoinHandle<Vec<String>>)
 #[test]
 fn dry_run_covers_staged_git_prompt_provider_and_output_without_commit() {
     let repo = staged_repo("pub fn feature() {}\n");
+    let config_home = tempfile::tempdir().expect("config home");
+    let config_dir = config_home.path().join("commit-wisp");
+    fs::create_dir(&config_dir).expect("create config directory");
+    fs::write(config_dir.join("config.toml"), "candidates = 3\n").expect("write config");
     let (base_url, handle) = provider_server(2);
     Command::cargo_bin("commit-wisp")
         .expect("binary")
         .current_dir(repo.path())
         .args(["--dry-run", "--model", "test-model"])
+        .env("XDG_CONFIG_HOME", config_home.path())
         .env("COMMIT_WISP_BASE_URL", base_url)
         .env("COMMIT_WISP_API_KEY", "test-only-key")
         .assert()
