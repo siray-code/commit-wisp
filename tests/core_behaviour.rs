@@ -150,7 +150,10 @@ fn parses_null_body_but_rejects_invalid_candidate_contracts() {
         r#"{"candidates":[{"subject":"fix: one","body":null}],"metadata":{}}"#,
         r#"{"candidates":[{"subject":"fix: duplicate","body":null},{"subject":"fix: duplicate","body":null}]}"#,
     ] {
-        assert!(parse_candidates(invalid).is_err(), "accepted invalid JSON: {invalid}");
+        assert!(
+            parse_candidates(invalid).is_err(),
+            "accepted invalid JSON: {invalid}"
+        );
     }
 }
 

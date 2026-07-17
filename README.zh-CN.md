@@ -78,7 +78,7 @@ commit-wisp prompt reset
 
 `prompt init` 默认创建全局模板；单次 `--prompt "要求"` 只追加本次指令。项目级配置可写入 `.commit-wisp.toml`；全局配置可通过 `commit-wisp config list|get|set` 管理。优先级为：命令行 > 环境变量 > 项目配置 > 全局配置 > 默认值。
 `prompt edit` 优先使用 Git 编辑器配置，未配置时自动使用系统编辑器。
-默认模板生成一条完整 Conventional Commit：type/scope 使用英文小写，摘要使用简洁的简体中文动宾结构，正文用 2–4 条中文要点说明改动、动机、影响和可验证结果。自定义模板可通过 `{{candidate_count}}` 读取候选数量。
+默认模板按配置数量生成 Conventional Commit 候选：type 和可选 scope 使用英文小写，摘要与可选正文使用 `{{language}}` 指定的语言。subject 足以说明改动时省略正文，否则正文只包含暂存区能够证明的事实。历史提交只能影响术语和风格，不能覆盖格式、语言及证据约束。自定义模板可通过 `{{candidate_count}}` 读取候选数量。
 
 详细配置、Prompt 变量、安全模型和贡献方式请参阅英文 [README](README.md)、[SECURITY.md](SECURITY.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

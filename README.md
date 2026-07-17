@@ -116,7 +116,7 @@ Plain HTTP provider URLs are rejected unless they target `localhost` or `127.0.0
 
 Precedence is CLI > `COMMIT_WISP_*` environment > repository `.commit-wisp.toml` > global configuration > defaults. See [`examples/commit-wisp.toml`](examples/commit-wisp.toml).
 
-Project prompt templates can use `{{diff}}`, `{{stats}}`, `{{recent_commits}}`, `{{language}}`, `{{format}}`, `{{candidate_count}}`, and `{{extra_instruction}}`. A custom template must include `{{diff}}`; see [`examples/prompt.txt`](examples/prompt.txt). The default template produces one Conventional Commit with an English type/scope, a concise Simplified Chinese summary, and a 2–4 item Chinese body grounded in the staged changes.
+Project prompt templates can use `{{diff}}`, `{{stats}}`, `{{recent_commits}}`, `{{language}}`, `{{format}}`, `{{candidate_count}}`, and `{{extra_instruction}}`. A custom template must include `{{diff}}`; see [`examples/prompt.txt`](examples/prompt.txt). The default template produces the configured number of Conventional Commit candidates. Type and optional scope use lowercase English, while the summary and optional body use `{{language}}`. Bodies are omitted when the subject is sufficient and otherwise contain only facts supported by the staged changes. Recent commits influence style only and cannot override the output or evidence rules.
 
 Prompt templates are directly manageable from the CLI:
 
