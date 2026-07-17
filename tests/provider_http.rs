@@ -47,7 +47,7 @@ async fn openai_provider_reports_structured_error_details() {
 
 #[tokio::test]
 async fn openai_provider_sends_authenticated_chat_request() {
-    let response = r#"{"choices":[{"message":{"content":"{\"candidates\":[{\"subject\":\"feat: add provider\"}]}"}}]}"#;
+    let response = r#"{"choices":[{"message":{"content":"{\"candidates\":[{\"subject\":\"feat: add provider\",\"body\":null},{\"subject\":\"feat(api): expose provider\",\"body\":null},{\"subject\":\"feat(config): configure provider\",\"body\":null}]}"}}]}"#;
     let (base_url, handle) = mock_server(response);
     let provider = OpenAiProvider::new(base_url, "test-model".into(), Some("secret-key".into()), 5)
         .expect("provider");
@@ -70,7 +70,7 @@ async fn openai_provider_sends_authenticated_chat_request() {
 #[tokio::test]
 async fn ollama_provider_uses_native_chat_protocol() {
     let response =
-        r#"{"message":{"content":"{\"candidates\":[{\"subject\":\"fix: local model\"}]}"}}"#;
+        r#"{"message":{"content":"{\"candidates\":[{\"subject\":\"fix: local model\",\"body\":null},{\"subject\":\"fix(ollama): use local model\",\"body\":null}]}"}}"#;
     let (base_url, handle) = mock_server(response);
     let provider = OllamaProvider::new(base_url, "qwen3".into(), 5).expect("provider");
 
@@ -83,6 +83,20 @@ async fn ollama_provider_uses_native_chat_protocol() {
     assert!(request.starts_with("POST /api/chat HTTP/1.1"));
     assert!(request.contains("\"stream\":false"));
     assert!(request.contains("Return exactly 2 candidates"));
+}
+
+#[tokio::test]
+async fn providers_reject_an_unexpected_candidate_count() {
+    let response = r#"{"choices":[{"message":{"content":"{\"candidates\":[{\"subject\":\"feat: only one\",\"body\":null}]}"}}]}"#;
+    let (base_url, handle) = mock_server(response);
+    let provider = OpenAiProvider::new(base_url, "test-model".into(), None, 5).expect("provider");
+
+    let error = provider
+        .generate("test prompt", 2)
+        .await
+        .expect_err("candidate count must be exact");
+    assert!(error.to_string().contains("exactly 2 candidates"));
+    handle.join().expect("server thread");
 }
 
 #[tokio::test]
