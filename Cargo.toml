@@ -15,7 +15,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
 crossterm = "0.29"
 directories = "6.0"
-keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service"] }
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "sync-secret-service", "vendored"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
