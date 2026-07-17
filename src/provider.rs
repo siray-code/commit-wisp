@@ -1,6 +1,6 @@
 //! Provider-independent commit candidate types and response parsing.
 
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -9,6 +9,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub subject: String,
     #[serde(default)]
@@ -29,6 +30,7 @@ impl Candidate {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CandidateEnvelope {
     candidates: Vec<Candidate>,
 }
@@ -51,17 +53,43 @@ pub fn parse_candidates(raw: &str) -> Result<Vec<Candidate>> {
         !envelope.candidates.is_empty(),
         "Provider returned no commit candidates"
     );
-    for candidate in &envelope.candidates {
+    validate_candidates(&envelope.candidates)?;
+    Ok(envelope.candidates)
+}
+
+fn validate_candidates(candidates: &[Candidate]) -> Result<()> {
+    let mut unique = HashSet::with_capacity(candidates.len());
+    for candidate in candidates {
         anyhow::ensure!(
-            candidate.subject.chars().count() <= 120,
-            "Provider returned an excessively long subject"
+            candidate.subject.chars().count() <= 72,
+            "Commit subject must be at most 72 characters"
         );
         anyhow::ensure!(
             !candidate.subject.contains('\n'),
             "Commit subject must be one line"
         );
+        if let Some(body) = &candidate.body {
+            anyhow::ensure!(
+                !body.trim().is_empty(),
+                "Commit body must be null or contain non-whitespace text"
+            );
+        }
+        anyhow::ensure!(
+            unique.insert((&candidate.subject, candidate.body.as_deref())),
+            "Provider returned duplicate commit candidates"
+        );
     }
-    Ok(envelope.candidates)
+    Ok(())
+}
+
+fn validate_candidate_count(candidates: Vec<Candidate>, expected: usize) -> Result<Vec<Candidate>> {
+    anyhow::ensure!(
+        candidates.len() == expected,
+        "Provider must return exactly {expected} candidates, got {}",
+        candidates.len()
+    );
+    validate_candidates(&candidates)?;
+    Ok(candidates)
 }
 
 #[async_trait]
@@ -171,7 +199,7 @@ impl LlmProvider for OpenAiProvider {
             candidates.extend(parse_candidates(&choice.message.content)?);
         }
         anyhow::ensure!(!candidates.is_empty(), "Provider returned no choices");
-        Ok(candidates)
+        validate_candidate_count(candidates, count)
     }
 
     async fn models(&self) -> Result<Vec<String>> {
@@ -252,7 +280,8 @@ impl LlmProvider for OllamaProvider {
             .send()
             .await?;
         let response: OllamaResponse = decode_response(response, "Invalid Ollama response").await?;
-        parse_candidates(&response.message.content)
+        let candidates = parse_candidates(&response.message.content)?;
+        validate_candidate_count(candidates, count)
     }
 
     async fn models(&self) -> Result<Vec<String>> {

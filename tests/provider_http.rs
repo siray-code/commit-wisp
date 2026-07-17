@@ -69,8 +69,7 @@ async fn openai_provider_sends_authenticated_chat_request() {
 
 #[tokio::test]
 async fn ollama_provider_uses_native_chat_protocol() {
-    let response =
-        r#"{"message":{"content":"{\"candidates\":[{\"subject\":\"fix: local model\",\"body\":null},{\"subject\":\"fix(ollama): use local model\",\"body\":null}]}"}}"#;
+    let response = r#"{"message":{"content":"{\"candidates\":[{\"subject\":\"fix: local model\",\"body\":null},{\"subject\":\"fix(ollama): use local model\",\"body\":null}]}"}}"#;
     let (base_url, handle) = mock_server(response);
     let provider = OllamaProvider::new(base_url, "qwen3".into(), 5).expect("provider");
 
