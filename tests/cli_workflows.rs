@@ -138,3 +138,84 @@ fn global_config_set_get_and_completion_generation_work() {
         .success()
         .stdout(predicate::str::contains("_commit-wisp"));
 }
+
+#[test]
+fn setup_keeps_historical_defaults_and_saves_model_when_discovery_fails() {
+    let home = tempfile::tempdir().expect("config home");
+    for (key, value) in [
+        ("provider", "ollama"),
+        ("base_url", "http://127.0.0.1:1"),
+        ("model", "historical-model"),
+    ] {
+        Command::cargo_bin("commit-wisp")
+            .expect("binary")
+            .args(["config", "set", key, value])
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .assert()
+            .success();
+    }
+
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .arg("setup")
+        .write_stdin("\n\nmanual-model\n")
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Provider (openai-compatible/ollama) [ollama]",
+        ))
+        .stdout(predicate::str::contains("Base URL [http://127.0.0.1:1]"))
+        .stdout(predicate::str::contains("Model [historical-model]"))
+        .stderr(predicate::str::contains(
+            "warning: Could not list provider models",
+        ));
+
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["config", "get", "model"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .assert()
+        .success()
+        .stdout("manual-model\n");
+}
+
+#[test]
+fn setup_reuses_environment_key_without_exposing_or_persisting_it() {
+    let home = tempfile::tempdir().expect("config home");
+    let (base_url, handle) = provider_server(1);
+    let secret = "test-only-environment-secret";
+
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args([
+            "setup",
+            "--provider",
+            "openai-compatible",
+            "--base-url",
+            &base_url,
+            "--model",
+            "test-model",
+        ])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env("COMMIT_WISP_API_KEY", secret)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret).not())
+        .stderr(predicate::str::contains(secret).not());
+    assert_eq!(handle.join().expect("provider thread").len(), 1);
+
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["config", "list"])
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env_remove("COMMIT_WISP_API_KEY")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret).not());
+}
