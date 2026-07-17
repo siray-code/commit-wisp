@@ -7,6 +7,13 @@ use std::{
 use commit_wisp::provider::{LlmProvider, OllamaProvider, OpenAiProvider};
 
 fn mock_server(response: &'static str) -> (String, thread::JoinHandle<String>) {
+    mock_server_with_status("200 OK", response)
+}
+
+fn mock_server_with_status(
+    status: &'static str,
+    response: &'static str,
+) -> (String, thread::JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock server");
     let address = listener.local_addr().expect("mock address");
     let handle = thread::spawn(move || {
@@ -14,13 +21,28 @@ fn mock_server(response: &'static str) -> (String, thread::JoinHandle<String>) {
         let mut request = vec![0_u8; 32_768];
         let count = stream.read(&mut request).expect("read request");
         let body = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            response.len(), response
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.len(),
+            response
         );
         stream.write_all(body.as_bytes()).expect("write response");
         String::from_utf8_lossy(&request[..count]).into_owned()
     });
     (format!("http://{address}"), handle)
+}
+
+#[tokio::test]
+async fn openai_provider_reports_structured_error_details() {
+    let response = r#"{"error":{"message":"n must be 1","type":"invalid_request_error"}}"#;
+    let (base_url, handle) = mock_server_with_status("400 Bad Request", response);
+    let provider = OpenAiProvider::new(base_url, "test-model".into(), None, 5).expect("provider");
+
+    let error = provider
+        .generate("test prompt", 3)
+        .await
+        .expect_err("provider error");
+    assert!(error.to_string().contains("400 Bad Request: n must be 1"));
+    handle.join().expect("server thread");
 }
 
 #[tokio::test]
@@ -31,7 +53,7 @@ async fn openai_provider_sends_authenticated_chat_request() {
         .expect("provider");
 
     let candidates = provider
-        .generate("test prompt", 1)
+        .generate("test prompt", 3)
         .await
         .expect("generation");
     assert_eq!(candidates[0].subject, "feat: add provider");
@@ -41,6 +63,8 @@ async fn openai_provider_sends_authenticated_chat_request() {
         .to_ascii_lowercase()
         .contains("authorization: bearer secret-key"));
     assert!(request.contains("test-model"));
+    assert!(request.contains("Return exactly 3 candidates"));
+    assert!(!request.contains("\"n\":"));
 }
 
 #[tokio::test]
@@ -51,13 +75,14 @@ async fn ollama_provider_uses_native_chat_protocol() {
     let provider = OllamaProvider::new(base_url, "qwen3".into(), 5).expect("provider");
 
     let candidates = provider
-        .generate("test prompt", 1)
+        .generate("test prompt", 2)
         .await
         .expect("generation");
     assert_eq!(candidates[0].subject, "fix: local model");
     let request = handle.join().expect("server thread");
     assert!(request.starts_with("POST /api/chat HTTP/1.1"));
     assert!(request.contains("\"stream\":false"));
+    assert!(request.contains("Return exactly 2 candidates"));
 }
 
 #[tokio::test]
