@@ -95,6 +95,6 @@ impl GitRepo {
             args.join(" "),
             String::from_utf8_lossy(&output.stderr).trim()
         );
-        String::from_utf8(output.stdout).context("Git output was not UTF-8")
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
