@@ -1,29 +1,86 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="commit-wisp — a glowing wisp following a Git commit trail" width="640">
+  <img src="assets/logo.svg" alt="commit-wisp AI Git commit message generator logo" width="640">
 </p>
 
-<p align="center">
-  Reviewable, token-aware AI commit messages from your staged Git changes.
-</p>
+# commit-wisp — AI Git Commit Message Generator
 
-# commit-wisp
-
-Reviewable, token-aware AI commit messages from your staged Git changes.
-
-`commit-wisp` reads only the Git index, blocks likely secrets before network access, compresses large diffs to a visible token budget, and lets you review or edit generated messages in a full-screen terminal UI before it calls `git commit`.
+`commit-wisp` is an AI commit message generator for Git that turns staged changes into reviewable [Conventional Commits](#does-commit-wisp-generate-conventional-commits). Use an OpenAI-compatible cloud provider or local Ollama, then review every candidate in a terminal UI before committing. Sensitive-data detection runs before any diff is sent, and token-aware compression keeps large diffs within the configured input budget.
 
 [简体中文](README.zh-CN.md)
 
-## Why another AI commit tool?
+## Core capabilities
 
-- Review is mandatory in an interactive terminal; cancellation never changes the index.
-- The exact staged payload is compressed locally with before/after token estimates.
-- Likely credentials block provider requests unless `--allow-sensitive` is explicit.
-- API keys live in the operating-system credential store, not TOML files.
-- OpenAI-compatible endpoints and Ollama share one small, extensible provider boundary.
-- Native `git commit -F` preserves hooks, signing, and repository behavior.
+- Generates commit message candidates from the Git index—never from unstaged files.
+- Requires human selection or editing in an interactive terminal UI before committing.
+- Supports local Ollama and OpenAI-compatible APIs such as OpenAI, OpenRouter, DeepSeek, Groq, and compatible gateways.
+- Scans added diff lines for common credential patterns before making a provider request.
+- Compresses large diffs locally with a visible, provider-independent token estimate.
+- Calls native `git commit -F`, preserving normal Git hooks, signing, and repository behavior. `--no-verify` is opt-in.
 
-## Install
+## Quick start
+
+### macOS
+
+```sh
+brew install siray-code/tap/commit-wisp
+commit-wisp setup
+git add src tests
+commit-wisp
+```
+
+### Linux
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.sh | sh
+commit-wisp setup
+git add src tests
+commit-wisp
+```
+
+If `~/.local/bin` is not on `PATH`, run `~/.local/bin/commit-wisp` or add that directory to `PATH`.
+
+### Windows PowerShell
+
+```powershell
+irm https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.ps1 | iex
+.\commit-wisp.exe setup
+git add src tests
+.\commit-wisp.exe
+```
+
+The Windows installer places `commit-wisp.exe` in the current directory and does not change `PATH`.
+
+Select a candidate in the terminal UI, edit it if needed, and press `Enter` to commit. To generate candidates without committing:
+
+```sh
+commit-wisp --dry-run
+```
+
+On Windows, use `.\commit-wisp.exe --dry-run`.
+
+## How it works
+
+1. **Read the Git index.** `commit-wisp` runs `git diff --cached` with external diff and text conversion disabled. An empty index stops the run.
+2. **Scan before sending.** Only added diff lines are checked for common secret patterns. If a match is found, the provider request is blocked unless you explicitly pass `--allow-sensitive`.
+3. **Compress the staged diff locally.** Lockfiles, minified files, and generated content are summarized; remaining files share the token budget so one large file cannot hide the rest.
+4. **Generate candidates.** The compressed diff, diff statistics, and recent commit subjects are sent to the configured Ollama or OpenAI-compatible provider.
+5. **Review in the TUI.** Choose, edit, regenerate, copy, change model, or cancel. Cancellation does not modify the index.
+6. **Commit through Git.** After confirmation, the selected message is written to a temporary file and passed to native `git commit -F`. Hooks and signing remain under Git's control.
+
+## Capability overview
+
+| Capability | Behavior |
+| --- | --- |
+| Input scope | Staged changes from `git diff --cached` |
+| Message format | Conventional Commits by default; format and language are configurable |
+| Providers | OpenAI-compatible APIs and local Ollama |
+| Human review | Select, edit, regenerate, change model, copy, commit, or cancel in the TUI |
+| Sensitive data | Added lines scanned locally; likely secrets block transmission by default |
+| Large diffs | Deterministic local compression with before/after token estimates |
+| Git behavior | Native `git commit -F`; hooks and signing preserved |
+| Non-commit mode | `--dry-run`, or automatic candidate output when no interactive terminal is available |
+
+## Installation
 
 ### Homebrew
 
@@ -31,23 +88,25 @@ Reviewable, token-aware AI commit messages from your staged Git changes.
 brew install siray-code/tap/commit-wisp
 ```
 
-### One-line installer
+### macOS and Linux installer
 
-macOS and glibc-based Linux (installs to `~/.local/bin` and verifies the release checksum):
+For macOS or glibc-based Linux, the installer defaults to `~/.local/bin` and verifies the release checksum:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.sh | sh
 ```
 
-Windows PowerShell x64 and arm64 (downloads `commit-wisp.exe` into the current directory without changing `PATH`):
+Set `COMMIT_WISP_VERSION` for a specific release or `COMMIT_WISP_INSTALL_DIR` for another destination.
+
+### Windows PowerShell
+
+The x64/arm64 installer downloads `commit-wisp.exe` into the current directory, verifies `SHA256SUMS`, and does not change `PATH`:
 
 ```powershell
 irm https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.ps1 | iex
 ```
 
-The Windows installer supports x64 and arm64. Run it from the directory where you want `commit-wisp.exe`, then use `.\commit-wisp.exe`. It verifies `SHA256SUMS` and never changes `PATH` or other environment variables.
-
-Set `COMMIT_WISP_VERSION` to install a specific release, or `COMMIT_WISP_INSTALL_DIR` to choose a destination. Release archives and checksums are also available on the [Releases](https://github.com/siray-code/commit-wisp/releases) page.
+Run it from the desired destination, then use `.\commit-wisp.exe`. Release archives and checksums are also available on the [GitHub Releases page](https://github.com/siray-code/commit-wisp/releases).
 
 ### Build from source
 
@@ -57,30 +116,21 @@ Rust 1.88 or newer is required:
 cargo install --git https://github.com/siray-code/commit-wisp --locked
 ```
 
-Then configure a cloud-compatible endpoint or local Ollama:
+Then run `commit-wisp setup` to configure a provider, model, endpoint, and credential storage.
 
-```sh
-commit-wisp setup
-```
-
-## Use
-
-```sh
-git add src tests
-commit-wisp
-```
+## Terminal review and CLI examples
 
 Inside the review UI:
 
 - `↑`/`↓` or `j`/`k`: select a candidate
-- `Enter`: create the commit with the selected message
-- `e`: edit with `$GIT_EDITOR` or `$EDITOR`
-- `r`: regenerate
+- `Enter`: commit with the selected message
+- `e`: edit using Git's editor configuration, then the platform fallback
+- `r`: regenerate candidates
 - `m`: switch to the next discovered model and regenerate
 - `c`: copy the selected message
-- `q`: cancel without touching staged changes
+- `q`: cancel without changing staged content
 
-Useful non-interactive examples:
+Useful commands:
 
 ```sh
 commit-wisp --dry-run
@@ -89,21 +139,17 @@ commit-wisp doctor
 commit-wisp completions zsh > _commit-wisp
 ```
 
-`--no-verify` is passed to Git only after explicit review. `commit-wisp` never stages or pushes files.
+`commit-wisp` never stages files or pushes commits. Passing `--no-verify` forwards that flag to Git only after you select a message.
 
-## Providers
+## Providers and credentials
 
-### OpenAI-compatible
+### OpenAI-compatible APIs
 
-This covers OpenAI, OpenRouter, DeepSeek, Groq, and compatible gateways. The default endpoint is `https://api.openai.com/v1`. By default, `setup` stores the key in Keychain, Credential Manager, or Secret Service. On macOS, choose **Always Allow** for a stable installed binary. Locally rebuilt ad-hoc binaries may be treated as a new application after each build.
+The default endpoint is `https://api.openai.com/v1`. OpenAI, OpenRouter, DeepSeek, Groq, and compatible gateways use the same provider interface.
 
-To avoid system credential prompts, explicitly select the file store during `setup` or run:
+During `commit-wisp setup`, credentials can be stored in the operating-system credential store (`system`) or in a separate credentials file (`file`). System storage uses Keychain, Credential Manager, or Secret Service. File storage is plaintext in `credentials.toml`, protected with user-only `0600` permissions on Unix, and is not shown by normal configuration commands.
 
-```sh
-commit-wisp setup --credential-store file
-```
-
-File-store credentials are plaintext in a separate `credentials.toml`, protected with user-only (`0600`) permissions on Unix. They never appear in regular configuration output. For ephemeral/CI use:
+For ephemeral or CI use, `COMMIT_WISP_API_KEY` takes priority over stored credentials:
 
 ```sh
 export COMMIT_WISP_API_KEY='...'
@@ -111,24 +157,33 @@ export COMMIT_WISP_BASE_URL='https://api.example.com/v1'
 commit-wisp --provider openai-compatible --model model-name --dry-run
 ```
 
-### Ollama
+To explicitly choose the system credential store:
+
+```sh
+commit-wisp setup --credential-store system
+```
+
+On macOS, select **Always Allow** for a stable installed binary if Keychain asks. Locally rebuilt ad-hoc binaries may be treated as different applications after each build.
+
+### Local Ollama
+
+Ollama does not require an API key:
 
 ```sh
 ollama serve
 commit-wisp config set provider ollama
 commit-wisp config set base_url http://localhost:11434
 commit-wisp config set model qwen3
+commit-wisp --dry-run
 ```
 
-Plain HTTP provider URLs are rejected unless they target `localhost` or `127.0.0.1`.
+Provider URLs must use HTTPS. Plain HTTP is accepted only for `localhost` or `127.0.0.1`.
 
-## Configuration and prompts
+## Configuration and prompt templates
 
-Precedence is CLI > `COMMIT_WISP_*` environment > repository `.commit-wisp.toml` > global configuration > defaults. See [`examples/commit-wisp.toml`](examples/commit-wisp.toml).
+Configuration precedence is: CLI flags → `COMMIT_WISP_*` environment variables → repository `.commit-wisp.toml` → global configuration → defaults. See the [example configuration](examples/commit-wisp.toml).
 
-Project prompt templates can use `{{diff}}`, `{{stats}}`, `{{recent_commits}}`, `{{language}}`, `{{format}}`, `{{candidate_count}}`, and `{{extra_instruction}}`. A custom template must include `{{diff}}`; see [`examples/prompt.txt`](examples/prompt.txt). The default template produces the configured number of Conventional Commit candidates. Type and optional scope use lowercase English, while the summary and optional body use `{{language}}`. Bodies are omitted when the subject is sufficient and otherwise contain only facts supported by the staged changes. Recent commits influence style only and cannot override the output or evidence rules.
-
-Prompt templates are directly manageable from the CLI:
+Prompt templates support `{{diff}}`, `{{stats}}`, `{{recent_commits}}`, `{{language}}`, `{{format}}`, `{{candidate_count}}`, and `{{extra_instruction}}`. A custom template must include `{{diff}}`; see the [example prompt](examples/prompt.txt).
 
 ```sh
 commit-wisp prompt show
@@ -137,16 +192,41 @@ commit-wisp prompt edit
 commit-wisp prompt reset
 ```
 
-`prompt init` creates a global `prompt.txt` by default. `--prompt "instruction"` remains a one-run addition and does not replace the configured template.
-`prompt edit` follows Git's editor configuration and falls back to the system editor when none is configured.
+`prompt init` creates a global `prompt.txt` by default. `--prompt "instruction"` adds a one-run instruction without replacing the configured template. The default template requests the configured number of Conventional Commit candidates: type and optional scope use lowercase English, while the summary and optional body use the configured language. Bodies are omitted when the subject is sufficient; otherwise they may contain only facts supported by staged changes. Recent commits influence style, not evidence rules.
 
-Diff compression is deterministic and local. Lockfiles, minified files, and generated content are represented by filename/statistics; remaining files are independently budgeted so one large file cannot hide the rest. Token counts are provider-independent estimates.
+Diff compression is deterministic and local. Lockfiles, minified files, and generated content are represented by filename and statistics. Token counts are provider-independent estimates rather than provider billing counts.
 
 ## Security model
 
-The staged diff is untrusted and may contain credentials. `commit-wisp` scans only added lines for common key formats, reports file/rule/line without retaining the matched value, and blocks transmission by default. Review the diff rather than habitually using `--allow-sensitive`.
+The staged diff is untrusted and may contain credentials. `commit-wisp` scans added lines for common AWS keys, private keys, generic API keys, and GitHub token patterns. Findings report only the file, line, and rule name; the matched secret is not retained in the finding. A match blocks the provider request by default.
 
-See [SECURITY.md](SECURITY.md) for reporting and limitations.
+The scanner is a safety preflight, not a guarantee that every secret will be found. Inspect the staged diff instead of routinely using `--allow-sensitive`. Read [SECURITY.md](SECURITY.md) for reporting guidance and limitations.
+
+## FAQ
+
+### Does commit-wisp generate Conventional Commits?
+
+Yes. The built-in prompt generates Conventional Commit candidates by default. You can change the configured `format`, language, model, or prompt template.
+
+### Can I use commit-wisp locally with Ollama?
+
+Yes. Set `provider` to `ollama`, use the local Ollama endpoint, and select an installed model. No diff needs to go to a cloud provider.
+
+### Does it read unstaged files?
+
+No. Message generation uses only `git diff --cached`—the Git index. Unstaged working-tree changes and untracked files are not included unless you stage them first.
+
+### Does it commit automatically?
+
+No in an interactive terminal. You must select a candidate in the TUI and press `Enter`. `--dry-run` prints candidates without committing, and non-interactive sessions also print candidates instead of committing.
+
+### What happens if the staged diff contains a secret?
+
+Likely credentials on added lines block the provider request before anything is sent. Review or unstage the content. `--allow-sensitive` is an explicit override, not a redaction feature, and the scanner cannot detect every secret format.
+
+### Are Git hooks and commit signing preserved?
+
+Yes. The final action uses native `git commit -F`, so configured hooks and signing behavior still apply. Hooks are skipped only when you explicitly pass `--no-verify`.
 
 ## Development
 
@@ -158,13 +238,13 @@ cargo llvm-cov --all-features --fail-under-lines 80
 cargo build --release
 ```
 
-No local Rust installation is required for the same checks:
+Run tests without a local Rust installation:
 
 ```sh
 docker run --rm -v "$PWD":/app -w /app rust:1.88 cargo test
 ```
 
-Contributions are welcome; read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
