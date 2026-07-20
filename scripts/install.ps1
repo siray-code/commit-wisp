@@ -20,9 +20,27 @@ if ($Version -ne "latest") {
     }
 }
 
-$architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+$architecture = $null
+try {
+    $runtimeArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    if ($null -ne $runtimeArchitecture) {
+        $architecture = $runtimeArchitecture.ToString()
+    }
+} catch {
+    # RuntimeInformation.OSArchitecture is unavailable in some Windows PowerShell 5.1 environments.
+}
+
+if ([string]::IsNullOrWhiteSpace($architecture)) {
+    $architecture = if ($env:PROCESSOR_ARCHITEW6432) {
+        $env:PROCESSOR_ARCHITEW6432
+    } else {
+        $env:PROCESSOR_ARCHITECTURE
+    }
+}
+
 $target = switch ($architecture) {
     "X64" { "x86_64-pc-windows-msvc" }
+    "AMD64" { "x86_64-pc-windows-msvc" }
     "Arm64" { "aarch64-pc-windows-msvc" }
     default { throw "Unsupported Windows architecture: $architecture (supported: x64, arm64)" }
 }
