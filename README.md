@@ -43,12 +43,12 @@ If `~/.local/bin` is not on `PATH`, run `~/.local/bin/commit-wisp` or add that d
 
 ```powershell
 irm https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.ps1 | iex
-.\commit-wisp.exe setup
+commit-wisp setup
 git add src tests
-.\commit-wisp.exe
+commit-wisp
 ```
 
-The Windows installer places `commit-wisp.exe` in the current directory and does not change `PATH`.
+The Windows installer places `commit-wisp.exe` in `%LOCALAPPDATA%\Programs\commit-wisp\bin` and automatically adds that directory to the user `PATH`.
 
 Select a candidate in the terminal UI, edit it if needed, and press `Enter` to commit. To generate candidates without committing:
 
@@ -56,7 +56,7 @@ Select a candidate in the terminal UI, edit it if needed, and press `Enter` to c
 commit-wisp --dry-run
 ```
 
-On Windows, use `.\commit-wisp.exe --dry-run`.
+On Windows, use `commit-wisp --dry-run`.
 
 ## How it works
 
@@ -100,13 +100,13 @@ Set `COMMIT_WISP_VERSION` for a specific release or `COMMIT_WISP_INSTALL_DIR` fo
 
 ### Windows PowerShell
 
-The x64/arm64 installer downloads `commit-wisp.exe` into the current directory, verifies `SHA256SUMS`, and does not change `PATH`:
+The x64/arm64 installer downloads `commit-wisp.exe` into `%LOCALAPPDATA%\Programs\commit-wisp\bin`, verifies `SHA256SUMS`, and automatically adds that directory to the user `PATH`:
 
 ```powershell
 irm https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.ps1 | iex
 ```
 
-Run it from the desired destination, then use `.\commit-wisp.exe`. Release archives and checksums are also available on the [GitHub Releases page](https://github.com/siray-code/commit-wisp/releases).
+The updated `PATH` is available immediately in the installer session; newly opened terminals inherit it as well. Set `COMMIT_WISP_INSTALL_DIR` to install elsewhere. Release archives and checksums are also available on the [GitHub Releases page](https://github.com/siray-code/commit-wisp/releases).
 
 ### Build from source
 

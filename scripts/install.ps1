@@ -1,6 +1,6 @@
 param(
     [string]$Version = $(if ($env:COMMIT_WISP_VERSION) { $env:COMMIT_WISP_VERSION } else { "latest" }),
-    [string]$InstallDir = $(if ($env:COMMIT_WISP_INSTALL_DIR) { $env:COMMIT_WISP_INSTALL_DIR } else { (Get-Location).Path }),
+    [string]$InstallDir = $(if ($env:COMMIT_WISP_INSTALL_DIR) { $env:COMMIT_WISP_INSTALL_DIR } else { Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "Programs\commit-wisp\bin" }),
     [string]$Repository = $(if ($env:COMMIT_WISP_REPOSITORY) { $env:COMMIT_WISP_REPOSITORY } else { "siray-code/commit-wisp" })
 )
 
@@ -70,7 +70,28 @@ try {
     Copy-Item -LiteralPath $binaryPath -Destination (Join-Path $destination "commit-wisp.exe") -Force
 
     Write-Host "Installed commit-wisp to $destination\commit-wisp.exe"
-    Write-Host "PATH was not changed. Run .\commit-wisp.exe from that directory."
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $pathEntries = @($userPath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $destinationInPath = $pathEntries | Where-Object {
+        [string]::Equals($_.Trim().TrimEnd('\'), $destination.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+    }
+    if (-not $destinationInPath) {
+        $newUserPath = (@($pathEntries) + $destination) -join ';'
+        [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+        Write-Host "Added $destination to the user PATH."
+    } else {
+        Write-Host "$destination is already in the user PATH."
+    }
+
+    $processPathEntries = @($env:Path -split ';')
+    $destinationInProcessPath = $processPathEntries | Where-Object {
+        [string]::Equals($_.Trim().TrimEnd('\'), $destination.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+    }
+    if (-not $destinationInProcessPath) {
+        $env:Path = "$destination;$env:Path"
+    }
+    Write-Host "Run commit-wisp setup to get started."
 } finally {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $tempDir
 }
