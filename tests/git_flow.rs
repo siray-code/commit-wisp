@@ -67,3 +67,53 @@ fn rejects_repository_without_staged_changes() {
     let error = repo.staged_diff().expect_err("empty index should fail");
     assert!(error.to_string().contains("No staged changes"));
 }
+
+#[test]
+fn tolerates_non_utf8_bytes_in_staged_text_diff() {
+    let temp = tempfile::tempdir().expect("temp repository");
+    git(temp.path(), &["init", "-q"]);
+
+    fs::write(temp.path().join("generated.txt"), b"valid\n").expect("write initial file");
+    git(temp.path(), &["add", "generated.txt"]);
+    git(
+        temp.path(),
+        &[
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "chore: initial",
+        ],
+    );
+
+    fs::write(temp.path().join("generated.txt"), b"invalid: \x80\n")
+        .expect("write non-UTF-8 content");
+    git(temp.path(), &["add", "generated.txt"]);
+
+    let repo = GitRepo::discover(temp.path()).expect("discover repository");
+    let staged = repo
+        .staged_diff()
+        .expect("non-UTF-8 staged diff should be decoded lossily");
+
+    assert!(staged.contains("invalid: \u{fffd}"));
+}
+
+#[test]
+fn represents_staged_protobuf_binary_without_emitting_its_contents() {
+    let temp = tempfile::tempdir().expect("temp repository");
+    git(temp.path(), &["init", "-q"]);
+
+    let protobuf = temp.path().join("fixture.pb");
+    fs::write(&protobuf, [0x0a, 0x03, b'f', b'o', b'o', 0x00, 0xff])
+        .expect("write protobuf fixture");
+    git(temp.path(), &["add", "fixture.pb"]);
+
+    let repo = GitRepo::discover(temp.path()).expect("discover repository");
+    let staged = repo.staged_diff().expect("binary staged diff");
+
+    assert!(staged.contains("Binary files"));
+    assert!(staged.contains("fixture.pb"));
+    assert!(!staged.as_bytes().contains(&0xff));
+}
