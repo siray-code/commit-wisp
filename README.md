@@ -1,3 +1,11 @@
+<p align="center">
+  <img src="assets/logo.svg" alt="commit-wisp — a glowing wisp following a Git commit trail" width="640">
+</p>
+
+<p align="center">
+  Reviewable, token-aware AI commit messages from your staged Git changes.
+</p>
+
 # commit-wisp
 
 Reviewable, token-aware AI commit messages from your staged Git changes.
@@ -31,11 +39,13 @@ macOS and glibc-based Linux (installs to `~/.local/bin` and verifies the release
 curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.sh | sh
 ```
 
-Windows PowerShell (installs to the current user's programs directory and updates user `PATH`):
+Windows PowerShell x64 and arm64 (downloads `commit-wisp.exe` into the current directory without changing `PATH`):
 
 ```powershell
 irm https://raw.githubusercontent.com/siray-code/commit-wisp/main/scripts/install.ps1 | iex
 ```
+
+The Windows installer supports x64 and arm64. Run it from the directory where you want `commit-wisp.exe`, then use `.\commit-wisp.exe`. It verifies `SHA256SUMS` and never changes `PATH` or other environment variables.
 
 Set `COMMIT_WISP_VERSION` to install a specific release, or `COMMIT_WISP_INSTALL_DIR` to choose a destination. Release archives and checksums are also available on the [Releases](https://github.com/siray-code/commit-wisp/releases) page.
 

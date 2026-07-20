@@ -149,7 +149,19 @@ fn create_provider(config: &Config) -> Result<Box<dyn LlmProvider>> {
     }
 }
 
+fn setup_banner() -> &'static str {
+    r#"
+   ___ ___  _ __ ___  _ __ ___ (_) |_      __      ___ ___ _ __
+  / __/ _ \| '_ ` _ \| '_ ` _ \| | __|____\ \ /\ / / / __| '_ \
+ | (_| (_) | | | | | | | | | | | | ||_____|\ V  V /| \__ \ |_) |
+  \___\___/|_| |_| |_|_| |_| |_|_|_|\__|     \_/\_/ |_|___/ .__/
+                                                            |_|
+                         commit-wisp
+"#
+}
+
 async fn setup(args: &SetupArgs) -> Result<()> {
+    println!("{}", setup_banner());
     let cwd = std::env::current_dir()?;
     let mut config = Config::load(&cwd, CliOverrides::default())?;
     let previous_provider = config.provider.clone();
@@ -554,6 +566,14 @@ mod tests {
             generate_completions(shell, &mut output);
             assert!(!output.is_empty());
         }
+    }
+
+    #[test]
+    fn setup_banner_identifies_commit_wisp() {
+        let banner = setup_banner();
+
+        assert!(banner.contains("commit-wisp"));
+        assert!(banner.lines().count() >= 4);
     }
 
     #[test]

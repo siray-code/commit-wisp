@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1200 500" xmlns="http://www.w3.org/2000/svg">
+  <title>commit-wisp</title>
+  <desc>A minimal glowing wisp travelling along a Git branch.</desc>
+  <defs>
+    <filter id="glow" x="-120%" y="-120%" width="340%" height="340%">
+      <feGaussianBlur stdDeviation="11" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="1200" height="500" rx="52" fill="#0B1035"/>
+  <g fill="none" stroke="#63F7CB" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M118 330H190C224 330 246 308 246 274V218C246 185 268 164 301 164H394" stroke-opacity=".72" stroke-width="7"/>
+    <path d="M246 218C246 251 268 272 301 272H358" stroke-opacity=".72" stroke-width="7"/>
+  </g>
+  <g fill="#0B1035" stroke="#63F7CB" stroke-width="6">
+    <circle cx="118" cy="330" r="9"/>
+    <circle cx="358" cy="272" r="9"/>
+  </g>
+  <g transform="translate(405 143)" filter="url(#glow)">
+    <path d="M0 42C26 38 42 22 49 0C53 27 70 43 96 49C70 55 53 72 49 98C43 72 26 55 0 49C0 47 0 45 0 42Z" fill="#63F7CB"/>
+    <circle cx="49" cy="49" r="12" fill="#E9FFF8"/>
+  </g>
+  <text x="552" y="274" fill="#F4FFFB" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="72" font-weight="650" letter-spacing="-4">commit<tspan fill="#63F7CB">-wisp</tspan></text>
+</svg>
