@@ -37,6 +37,10 @@ pub struct Cli {
     /// Pass --no-verify to git commit after review.
     #[arg(long)]
     pub no_verify: bool,
+
+    /// Print per-phase timing diagnostics to stderr.
+    #[arg(long, short = 'v')]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Subcommand)]

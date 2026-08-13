@@ -4,6 +4,7 @@ use std::{collections::HashSet, time::Duration};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -138,6 +139,7 @@ struct OpenAiRequest<'a> {
     model: &'a str,
     messages: Vec<Message<'a>>,
     temperature: f32,
+    stream: bool,
 }
 
 #[derive(Serialize)]
@@ -171,6 +173,24 @@ struct OpenAiModel {
     id: String,
 }
 
+#[derive(Deserialize)]
+struct OpenAiStreamChunk {
+    #[serde(default)]
+    choices: Vec<OpenAiStreamChoice>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiStreamChoice {
+    #[serde(default)]
+    delta: OpenAiStreamDelta,
+}
+
+#[derive(Deserialize, Default)]
+struct OpenAiStreamDelta {
+    #[serde(default)]
+    content: Option<String>,
+}
+
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
     async fn generate(&self, prompt: &str, count: usize) -> Result<Vec<Candidate>> {
@@ -182,6 +202,7 @@ impl LlmProvider for OpenAiProvider {
                 content: &prompt,
             }],
             temperature: 0.2,
+            stream: true,
         };
         let request = self
             .client
@@ -192,13 +213,25 @@ impl LlmProvider for OpenAiProvider {
             .send()
             .await
             .context("Could not reach the OpenAI-compatible provider")?;
-        let response: OpenAiResponse =
-            decode_response(response, "Invalid OpenAI-compatible response").await?;
-        let mut candidates = Vec::new();
-        for choice in response.choices {
-            candidates.extend(parse_candidates(&choice.message.content)?);
-        }
-        anyhow::ensure!(!candidates.is_empty(), "Provider returned no choices");
+        let response = ensure_success(response).await?;
+        let content = if is_streaming_content_type(&response) {
+            consume_sse(response)
+                .await
+                .context("Failed to read streaming response; provider may not support SSE")?
+        } else {
+            // Gateways that ignore `stream: true` return a plain JSON body;
+            // parse it exactly like the non-streaming path of old.
+            let response: OpenAiResponse = response
+                .json()
+                .await
+                .context("Invalid OpenAI-compatible response")?;
+            let mut content = String::new();
+            for choice in response.choices {
+                content.push_str(&choice.message.content);
+            }
+            content
+        };
+        let candidates = parse_candidates(&content)?;
         validate_candidate_count(candidates, count)
     }
 
@@ -251,6 +284,14 @@ struct OllamaResponse {
 }
 
 #[derive(Deserialize)]
+struct OllamaStreamChunk {
+    #[serde(default)]
+    message: Option<OpenAiMessage>,
+    #[serde(default)]
+    done: bool,
+}
+
+#[derive(Deserialize)]
 struct OllamaModels {
     models: Vec<OllamaModel>,
 }
@@ -270,7 +311,7 @@ impl LlmProvider for OllamaProvider {
                 role: "user",
                 content: &prompt,
             }],
-            stream: false,
+            stream: true,
             format: "json",
         };
         let response = self
@@ -279,8 +320,18 @@ impl LlmProvider for OllamaProvider {
             .json(&body)
             .send()
             .await?;
-        let response: OllamaResponse = decode_response(response, "Invalid Ollama response").await?;
-        let candidates = parse_candidates(&response.message.content)?;
+        let response = ensure_success(response).await?;
+        let content = if is_streaming_content_type(&response) {
+            consume_ndjson(response)
+                .await
+                .context("Failed to read streaming response; provider may not support streaming")?
+        } else {
+            // Ollama servers that ignore `stream: true` return one JSON body.
+            let response: OllamaResponse =
+                response.json().await.context("Invalid Ollama response")?;
+            response.message.content
+        };
+        let candidates = parse_candidates(&content)?;
         validate_candidate_count(candidates, count)
     }
 
@@ -314,13 +365,108 @@ async fn decode_response<T: DeserializeOwned>(
     response: reqwest::Response,
     invalid_context: &'static str,
 ) -> Result<T> {
+    let response = ensure_success(response).await?;
+    response.json().await.context(invalid_context)
+}
+
+async fn ensure_success(response: reqwest::Response) -> Result<reqwest::Response> {
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         let detail = provider_error_detail(&body);
         anyhow::bail!("Provider returned {status}: {detail}");
     }
-    response.json().await.context(invalid_context)
+    Ok(response)
+}
+
+fn is_streaming_content_type(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|content_type| {
+            content_type.contains("text/event-stream")
+                || content_type.contains("application/x-ndjson")
+        })
+}
+
+/// Accumulates `data:` payloads of a server-sent event stream until `[DONE]`
+/// or end of stream.
+async fn consume_sse(response: reqwest::Response) -> Result<String> {
+    let mut content = String::new();
+    let mut buffer = SseLineBuffer::default();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("Stream interrupted")?;
+        for line in buffer.push(&chunk) {
+            let Some(data) = line.strip_prefix("data:") else {
+                continue;
+            };
+            let data = data.trim();
+            if data == "[DONE]" {
+                return Ok(content);
+            }
+            if let Ok(chunk) = serde_json::from_str::<OpenAiStreamChunk>(data) {
+                if let Some(delta) = chunk
+                    .choices
+                    .first()
+                    .and_then(|choice| choice.delta.content.as_deref())
+                {
+                    content.push_str(delta);
+                }
+            }
+        }
+    }
+    anyhow::ensure!(!content.is_empty(), "Provider returned an empty stream");
+    Ok(content)
+}
+
+/// Accumulates `message.content` of an Ollama NDJSON stream until `done` or
+/// end of stream.
+async fn consume_ndjson(response: reqwest::Response) -> Result<String> {
+    let mut content = String::new();
+    let mut buffer = SseLineBuffer::default();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("Stream interrupted")?;
+        for line in buffer.push(&chunk) {
+            if let Ok(chunk) = serde_json::from_str::<OllamaStreamChunk>(line.trim()) {
+                if let Some(message) = chunk.message.as_ref() {
+                    content.push_str(&message.content);
+                }
+                if chunk.done {
+                    return Ok(content);
+                }
+            }
+        }
+    }
+    anyhow::ensure!(!content.is_empty(), "Provider returned an empty stream");
+    Ok(content)
+}
+
+/// Splits an arbitrary byte stream into complete lines, keeping a partial
+/// trailing line for the next push. Empty lines are dropped.
+#[derive(Default)]
+struct SseLineBuffer {
+    carry: String,
+}
+
+impl SseLineBuffer {
+    fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.carry
+            .push_str(std::str::from_utf8(chunk).unwrap_or_default());
+        let mut lines = Vec::new();
+        let mut rest = self.carry.as_str();
+        while let Some(newline) = rest.find('\n') {
+            let line = rest[..newline].trim_end_matches('\r');
+            if !line.is_empty() {
+                lines.push(line.to_owned());
+            }
+            rest = &rest[newline + 1..];
+        }
+        self.carry = rest.to_owned();
+        lines
+    }
 }
 
 fn provider_error_detail(body: &str) -> String {
@@ -373,5 +519,22 @@ mod tests {
     #[test]
     fn rejects_empty_candidates() {
         assert!(parse_candidates(r#"{"candidates":[]}"#).is_err());
+    }
+
+    #[test]
+    fn line_buffer_splits_lines_across_chunk_boundaries() {
+        let mut buffer = SseLineBuffer::default();
+        assert_eq!(buffer.push(b"data: {\"a\":1}\nda"), vec!["data: {\"a\":1}"]);
+        assert_eq!(buffer.push(b"ta: [DONE]\n\n"), vec!["data: [DONE]"]);
+    }
+
+    #[test]
+    fn line_buffer_tolerates_crlf_and_empty_lines() {
+        let mut buffer = SseLineBuffer::default();
+        assert_eq!(
+            buffer.push(b"data: one\r\ndata: two\r\n\r\n"),
+            vec!["data: one", "data: two"]
+        );
+        assert_eq!(buffer.push(b"data: three\r\n"), vec!["data: three"]);
     }
 }

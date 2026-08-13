@@ -5,6 +5,7 @@ use std::{
     io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::Command as ProcessCommand,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -37,7 +38,26 @@ pub async fn run() -> Result<()> {
     }
 }
 
+/// How long the model-list request may outlive generation before we fall back
+/// to the configured model. Keeps a hung `/models` endpoint off the critical
+/// path while giving a healthy one (TCP + TLS handshake included) time to win.
+const MODELS_GRACE: Duration = Duration::from_millis(500);
+
+fn report_phase(cli: &Cli, name: &str, elapsed: Duration, detail: Option<String>) {
+    if !cli.verbose {
+        return;
+    }
+    match detail {
+        Some(detail) => eprintln!(
+            "commit-wisp: {name}: {detail} ({:.2}s)",
+            elapsed.as_secs_f64()
+        ),
+        None => eprintln!("commit-wisp: {name}: {:.2}s", elapsed.as_secs_f64()),
+    }
+}
+
 async fn generate_and_review(cli: &Cli) -> Result<()> {
+    let total_start = Instant::now();
     let cwd = std::env::current_dir()?;
     let mut config = Config::load(
         &cwd,
@@ -47,7 +67,11 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
         },
     )?;
     let repo = GitRepo::discover(&cwd)?;
+    let git_start = Instant::now();
     let diff = repo.staged_diff()?;
+    let stats = repo.diff_stats()?;
+    let recent = repo.recent_commits(8)?;
+    report_phase(cli, "git", git_start.elapsed(), None);
     let findings = scan_sensitive(&diff);
     if !findings.is_empty() && !cli.allow_sensitive {
         let locations = findings
@@ -57,6 +81,7 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
             .join(", ");
         anyhow::bail!("Sensitive content detected; nothing was sent: {locations}. Inspect the staged diff or explicitly use --allow-sensitive.");
     }
+    let compress_start = Instant::now();
     let compression = compress_diff(
         &diff,
         &CompressionOptions {
@@ -64,8 +89,8 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
             ..CompressionOptions::default()
         },
     );
-    let stats = repo.diff_stats()?;
-    let recent = repo.recent_commits(8)?;
+    report_phase(cli, "compress", compress_start.elapsed(), None);
+    let prompt_start = Instant::now();
     let custom_template = config
         .prompt_file
         .as_deref()
@@ -82,14 +107,92 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
         extra_instruction: cli.prompt.as_deref(),
         custom_template: custom_template.as_deref(),
     })?;
+    report_phase(cli, "prompt", prompt_start.elapsed(), None);
 
+    if cli.verbose {
+        eprintln!(
+            "commit-wisp: provider={} base_url={} model={}",
+            config.provider, config.base_url, config.model
+        );
+    }
+    let interactive = !cli.dry_run && io::stdin().is_terminal() && io::stdout().is_terminal();
+    let mut provider = create_provider(&config)?;
+    let mut models_cache: Option<Vec<String>> = None;
     loop {
-        let provider = create_provider(&config)?;
-        let models = provider
-            .models()
-            .await
-            .unwrap_or_else(|_| vec![config.model.clone()]);
-        let mut candidates = provider.generate(&prompt, config.candidates).await?;
+        if provider.model() != config.model {
+            provider = create_provider(&config)?;
+        }
+        eprintln!(
+            "commit-wisp: generating candidates with {} via {}…",
+            config.model, config.base_url
+        );
+        let generate_start = Instant::now();
+        let progress = if interactive {
+            Some(tokio::spawn(async {
+                let start = Instant::now();
+                loop {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    eprint!(
+                        "\rcommit-wisp: generating… {:.1}s  ",
+                        start.elapsed().as_secs_f64()
+                    );
+                    let _ = io::stderr().flush();
+                }
+            }))
+        } else {
+            None
+        };
+        let (candidates, models) = if interactive && models_cache.is_none() {
+            let models_future = provider.models();
+            tokio::pin!(models_future);
+            let models_start = Instant::now();
+            let (candidates, models_result) = tokio::join!(
+                provider.generate(&prompt, config.candidates),
+                tokio::time::timeout(MODELS_GRACE, &mut models_future),
+            );
+            report_phase(
+                cli,
+                "models()",
+                models_start.elapsed(),
+                match &models_result {
+                    Ok(Ok(models)) => Some(format!("{} models", models.len())),
+                    Ok(Err(error)) => Some(format!("failed: {error}")),
+                    Err(_) => Some("timed out; fell back".into()),
+                },
+            );
+            match models_result {
+                Ok(Ok(models)) => {
+                    models_cache = Some(models.clone());
+                    (candidates, models)
+                }
+                Ok(Err(_)) | Err(_) => (candidates, vec![config.model.clone()]),
+            }
+        } else {
+            let models = models_cache
+                .clone()
+                .unwrap_or_else(|| vec![config.model.clone()]);
+            if cli.verbose {
+                let detail = if models_cache.is_some() {
+                    "cached"
+                } else {
+                    "skipped (non-interactive)"
+                };
+                eprintln!("commit-wisp: models(): {detail}");
+            }
+            (provider.generate(&prompt, config.candidates).await, models)
+        };
+        if let Some(task) = progress {
+            task.abort();
+            eprint!("\r\x1b[2K");
+            let _ = io::stderr().flush();
+        }
+        let mut candidates = candidates?;
+        report_phase(
+            cli,
+            "generate()",
+            generate_start.elapsed(),
+            Some(format!("{} candidates", candidates.len())),
+        );
         if cli.dry_run || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
             println!(
                 "Staged diff tokens: {} -> {} ({} lines omitted)",
@@ -100,6 +203,7 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
             for (index, candidate) in candidates.iter().enumerate() {
                 println!("\n{}. {}", index + 1, candidate.message());
             }
+            report_phase(cli, "total", total_start.elapsed(), None);
             return Ok(());
         }
         match tui::review(ReviewInput {
@@ -113,12 +217,14 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
             ReviewAction::Commit(message) => {
                 repo.commit(&message, cli.no_verify)?;
                 println!("Committed: {}", message.lines().next().unwrap_or_default());
+                report_phase(cli, "total", total_start.elapsed(), None);
                 return Ok(());
             }
             ReviewAction::Regenerate => {}
             ReviewAction::ChangeModel(model) => config.model = model,
             ReviewAction::Cancel => {
                 println!("Cancelled; staged changes were not modified.");
+                report_phase(cli, "total", total_start.elapsed(), None);
                 return Ok(());
             }
         }

@@ -40,11 +40,24 @@ fn provider_server(requests: usize) -> (String, thread::JoinHandle<Vec<String>>)
                 let count = stream.read(&mut input).expect("read request");
                 let request = String::from_utf8_lossy(&input[..count]).into_owned();
                 let response = if request.starts_with("GET /models") {
-                    r#"{"data":[{"id":"test-model"},{"id":"other-model"}]}"#
+                    let body = r#"{"data":[{"id":"test-model"},{"id":"other-model"}]}"#;
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
                 } else {
-                    r#"{"choices":[{"message":{"content":"{\"candidates\":[{\"subject\":\"feat(cli): generated safely\",\"body\":\"Describes staged changes.\"},{\"subject\":\"feat: expose generated feature\",\"body\":null},{\"subject\":\"feat(api): add public feature\",\"body\":null}]}"}}]}"#
+                    // Serve /chat/completions as a server-sent event stream so
+                    // integration tests exercise the real streaming path.
+                    let candidates = r#"{"candidates":[{"subject":"feat(cli): generated safely","body":"Describes staged changes."},{"subject":"feat: expose generated feature","body":null},{"subject":"feat(api): add public feature","body":null}]}"#;
+                    let (raw_head, raw_tail) = candidates.split_at(candidates.len() / 2);
+                    let head = serde_json::to_string(raw_head).expect("encode head");
+                    let tail = serde_json::to_string(raw_tail).expect("encode tail");
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: {{\"choices\":[{{\"delta\":{{\"content\":{head}}}}}]}}\n\ndata: {{\"choices\":[{{\"delta\":{{\"content\":{tail}}}}}]}}\n\ndata: [DONE]\n\n"
+                    )
                 };
-                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).expect("write response");
+                stream.write_all(response.as_bytes()).expect("write response");
                 request
             })
             .collect()
@@ -59,7 +72,7 @@ fn dry_run_covers_staged_git_prompt_provider_and_output_without_commit() {
     let config_dir = config_home.path().join("commit-wisp");
     fs::create_dir(&config_dir).expect("create config directory");
     fs::write(config_dir.join("config.toml"), "candidates = 3\n").expect("write config");
-    let (base_url, handle) = provider_server(2);
+    let (base_url, handle) = provider_server(1);
     Command::cargo_bin("commit-wisp")
         .expect("binary")
         .current_dir(repo.path())
@@ -72,12 +85,11 @@ fn dry_run_covers_staged_git_prompt_provider_and_output_without_commit() {
         .stdout(predicate::str::contains("feat(cli): generated safely"))
         .stdout(predicate::str::contains("Staged diff tokens"));
     let requests = handle.join().expect("provider thread");
+    // Non-interactive runs skip the /models preflight: generation must be the
+    // only request so a slow or hung /models endpoint can never delay commits.
     assert!(requests
         .iter()
-        .any(|request| request.starts_with("GET /models")));
-    assert!(requests
-        .iter()
-        .any(|request| request.starts_with("POST /chat/completions")));
+        .all(|request| request.starts_with("POST /chat/completions")));
 
     let status = ProcessCommand::new("git")
         .args(["status", "--porcelain"])
@@ -88,6 +100,29 @@ fn dry_run_covers_staged_git_prompt_provider_and_output_without_commit() {
         String::from_utf8_lossy(&status.stdout).trim(),
         "A  change.rs"
     );
+}
+
+#[test]
+fn verbose_reports_phase_timings_on_stderr() {
+    let repo = staged_repo("pub fn feature() {}\n");
+    let config_home = tempfile::tempdir().expect("config home");
+    let config_dir = config_home.path().join("commit-wisp");
+    fs::create_dir(&config_dir).expect("create config directory");
+    fs::write(config_dir.join("config.toml"), "candidates = 3\n").expect("write config");
+    let (base_url, handle) = provider_server(1);
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .current_dir(repo.path())
+        .args(["--dry-run", "--verbose", "--model", "test-model"])
+        .env("XDG_CONFIG_HOME", config_home.path())
+        .env("COMMIT_WISP_BASE_URL", base_url)
+        .env("COMMIT_WISP_API_KEY", "test-only-key")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("commit-wisp: generate("))
+        .stderr(predicate::str::contains("commit-wisp: models(): skipped"))
+        .stderr(predicate::str::contains("commit-wisp: total"));
+    handle.join().expect("provider thread");
 }
 
 #[test]
