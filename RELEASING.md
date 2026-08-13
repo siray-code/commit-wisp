@@ -22,9 +22,11 @@ git push origin v0.1.0
 
 The release workflow:
 
-1. builds native archives for x86-64 and ARM64 Linux/macOS, plus x86-64 Windows;
-2. publishes the archives, install scripts, generated release notes, and `SHA256SUMS`;
+1. builds native archives and bare self-update binaries for x86-64 and ARM64 Linux, macOS, and Windows;
+2. publishes the archives, bare binaries, install scripts, generated release notes, and `SHA256SUMS`;
 3. renders `Formula/commit-wisp.rb` with immutable release URLs and checksums;
 4. commits the formula update to `siray-code/homebrew-tap`.
 
 The tag version should match the package version. If any build fails, the release and Homebrew update do not run.
+
+Do not remove or rename the bare `commit-wisp-<target>` / `.exe` assets: `commit-wisp update` selects them by exact name and requires their entries in `SHA256SUMS` before replacing an installation.

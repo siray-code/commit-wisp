@@ -98,6 +98,16 @@ curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/siray-co
 
 Set `COMMIT_WISP_VERSION` for a specific release or `COMMIT_WISP_INSTALL_DIR` for another destination.
 
+### Updating
+
+Upgrade to the latest stable release with:
+
+```sh
+commit-wisp update
+```
+
+Homebrew installations are upgraded through `brew upgrade commit-wisp`. Installer, Cargo, and manual installations replace the current binary only after verifying the matching release checksum. Existing configuration and credentials are unchanged. Versions older than the release that introduced `update` must be upgraded once through their original installation method.
+
 ### Windows PowerShell
 
 The x64/arm64 installer downloads `commit-wisp.exe` into `%LOCALAPPDATA%\Programs\commit-wisp\bin`, verifies `SHA256SUMS`, and automatically adds that directory to the user `PATH`:

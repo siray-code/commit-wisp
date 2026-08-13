@@ -67,9 +67,11 @@ jobs:
         shell: bash
         run: |
           asset="commit-wisp-${{ matrix.target }}"
-          mkdir -p "$asset"
-          cp "target/${{ matrix.target }}/release/commit-wisp" README.md LICENSE "$asset/"
-          tar -czf "$asset.tar.gz" "$asset"
+          cp "target/${{ matrix.target }}/release/commit-wisp" "$asset"
+          chmod 755 "$asset"
+          mkdir -p "archive/$asset"
+          cp "target/${{ matrix.target }}/release/commit-wisp" README.md LICENSE "archive/$asset/"
+          tar -C archive -czf "$asset.tar.gz" "$asset"
       - name: Package Windows archive
         if: runner.os == 'Windows'
         shell: pwsh
@@ -77,11 +79,14 @@ jobs:
           $asset = "commit-wisp-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $asset
           Copy-Item "target/${{ matrix.target }}/release/commit-wisp.exe", README.md, LICENSE -Destination $asset
+          Copy-Item "target/${{ matrix.target }}/release/commit-wisp.exe" "$asset.exe"
           Compress-Archive -Path $asset -DestinationPath "$asset.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: commit-wisp-${{ matrix.target }}
-          path: commit-wisp-${{ matrix.target }}.${{ matrix.archive }}
+          path: |
+            commit-wisp-${{ matrix.target }}.${{ matrix.archive }}
+            commit-wisp-${{ matrix.target }}${{ runner.os == 'Windows' && '.exe' || '' }}
           if-no-files-found: error
 
   release:
@@ -101,7 +106,7 @@ jobs:
         run: |
           cp scripts/install.sh scripts/install.ps1 dist/
           cd dist
-          sha256sum commit-wisp-*.* install.sh install.ps1 > SHA256SUMS
+          sha256sum commit-wisp-* install.sh install.ps1 > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

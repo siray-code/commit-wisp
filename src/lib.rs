@@ -10,3 +10,4 @@ pub mod provider;
 pub mod secret;
 pub mod security;
 pub mod tui;
+pub mod update;

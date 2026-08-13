@@ -98,6 +98,16 @@ curl --proto '=https' --tlsv1.2 -LsSf https://raw.githubusercontent.com/siray-co
 
 使用 `COMMIT_WISP_VERSION` 可指定版本，使用 `COMMIT_WISP_INSTALL_DIR` 可指定安装目录。
 
+### 更新
+
+执行下面的命令即可升级到最新稳定版本：
+
+```sh
+commit-wisp update
+```
+
+Homebrew 安装会交给 `brew upgrade commit-wisp` 处理；安装脚本、Cargo 和手工安装会在验证对应 Release checksum 后替换当前二进制。已有配置和凭据不会改变。早于首次提供 `update` 命令的版本，需要先通过原安装方式升级一次。
+
 ### Windows PowerShell
 
 x64/arm64 脚本将 `commit-wisp.exe` 下载到 `%LOCALAPPDATA%\Programs\commit-wisp\bin`，校验 `SHA256SUMS`，并自动把该目录加入用户 `PATH`：

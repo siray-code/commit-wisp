@@ -14,6 +14,16 @@ fn help_describes_reviewable_staged_commit_workflow() {
 }
 
 #[test]
+fn update_is_a_first_class_command() {
+    Command::cargo_bin("commit-wisp")
+        .expect("binary")
+        .args(["update", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("latest stable release"));
+}
+
+#[test]
 fn config_list_never_prints_api_key_environment_value() {
     Command::cargo_bin("commit-wisp")
         .expect("binary")

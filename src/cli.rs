@@ -59,6 +59,8 @@ pub enum Commands {
     },
     /// Check Git, configuration, credentials, and provider connectivity.
     Doctor,
+    /// Update commit-wisp to the latest stable release.
+    Update,
     /// Generate shell completion scripts.
     Completions { shell: CompletionShell },
 }

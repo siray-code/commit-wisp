@@ -30,6 +30,7 @@ pub async fn run() -> Result<()> {
         Some(Commands::Config { action }) => config_command(action),
         Some(Commands::Prompt { action }) => prompt_command(action),
         Some(Commands::Doctor) => doctor(&cli).await,
+        Some(Commands::Update) => crate::update::update().await,
         Some(Commands::Completions { shell }) => {
             completions(*shell);
             Ok(())
