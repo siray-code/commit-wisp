@@ -34,7 +34,7 @@ fn provider_server(requests: usize) -> (String, thread::JoinHandle<Vec<String>>)
     let address = listener.local_addr().expect("provider address");
     let handle = thread::spawn(move || {
         (0..requests)
-            .map(|_| {
+            .map(|index| {
                 let (mut stream, _) = listener.accept().expect("accept provider request");
                 let mut input = [0_u8; 32_768];
                 let count = stream.read(&mut input).expect("read request");
@@ -49,7 +49,9 @@ fn provider_server(requests: usize) -> (String, thread::JoinHandle<Vec<String>>)
                 } else {
                     // Serve /chat/completions as a server-sent event stream so
                     // integration tests exercise the real streaming path.
-                    let candidates = r#"{"candidates":[{"subject":"feat(cli): generated safely","body":"Describes staged changes."},{"subject":"feat: expose generated feature","body":null},{"subject":"feat(api): add public feature","body":null}]}"#;
+                    let candidates = format!(
+                        r#"{{"candidates":[{{"subject":"feat: generated variation {index}","body":null}}]}}"#
+                    );
                     let (raw_head, raw_tail) = candidates.split_at(candidates.len() / 2);
                     let head = serde_json::to_string(raw_head).expect("encode head");
                     let tail = serde_json::to_string(raw_tail).expect("encode tail");
@@ -72,7 +74,7 @@ fn dry_run_covers_staged_git_prompt_provider_and_output_without_commit() {
     let config_dir = config_home.path().join("commit-wisp");
     fs::create_dir(&config_dir).expect("create config directory");
     fs::write(config_dir.join("config.toml"), "candidates = 3\n").expect("write config");
-    let (base_url, handle) = provider_server(1);
+    let (base_url, handle) = provider_server(3);
     Command::cargo_bin("commit-wisp")
         .expect("binary")
         .current_dir(repo.path())
@@ -82,7 +84,7 @@ fn dry_run_covers_staged_git_prompt_provider_and_output_without_commit() {
         .env("COMMIT_WISP_API_KEY", "test-only-key")
         .assert()
         .success()
-        .stdout(predicate::str::contains("feat(cli): generated safely"))
+        .stdout(predicate::str::contains("feat: generated variation"))
         .stdout(predicate::str::contains("Staged diff tokens"));
     let requests = handle.join().expect("provider thread");
     // Non-interactive runs skip the /models preflight: generation must be the
@@ -109,7 +111,7 @@ fn verbose_reports_phase_timings_on_stderr() {
     let config_dir = config_home.path().join("commit-wisp");
     fs::create_dir(&config_dir).expect("create config directory");
     fs::write(config_dir.join("config.toml"), "candidates = 3\n").expect("write config");
-    let (base_url, handle) = provider_server(1);
+    let (base_url, handle) = provider_server(3);
     Command::cargo_bin("commit-wisp")
         .expect("binary")
         .current_dir(repo.path())
@@ -120,6 +122,8 @@ fn verbose_reports_phase_timings_on_stderr() {
         .assert()
         .success()
         .stderr(predicate::str::contains("commit-wisp: generate("))
+        .stderr(predicate::str::contains("candidate #1: headers="))
+        .stderr(predicate::str::contains("first-content="))
         .stderr(predicate::str::contains("commit-wisp: models(): skipped"))
         .stderr(predicate::str::contains("commit-wisp: total"));
     handle.join().expect("provider thread");

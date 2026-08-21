@@ -4,7 +4,9 @@ use std::{
     thread,
 };
 
-use commit_wisp::provider::{LlmProvider, OllamaProvider, OpenAiProvider};
+use commit_wisp::provider::{
+    generate_candidates_parallel_traced, LlmProvider, OllamaProvider, OpenAiProvider,
+};
 
 fn mock_server(response: &'static str) -> (String, thread::JoinHandle<String>) {
     mock_server_with_status("200 OK", response)
@@ -144,6 +146,26 @@ async fn providers_discover_and_sort_models() {
 fn rejects_plain_http_for_non_local_provider_endpoints() {
     assert!(OpenAiProvider::new("http://example.com/v1".into(), "model".into(), None, 5,).is_err());
     assert!(OllamaProvider::new("http://example.com".into(), "model".into(), 5).is_err());
+}
+
+#[tokio::test]
+async fn traced_openai_stream_records_headers_first_content_and_completion() {
+    let candidates = r#"{"candidates":[{"subject":"feat: trace stream","body":null}]}"#;
+    let content = serde_json::to_string(candidates).expect("encode content");
+    let body = format!(
+        "data: {{\"choices\":[{{\"delta\":{{\"content\":{content}}}}}]}}\n\ndata: [DONE]\n\n"
+    );
+    let (base_url, handle) = mock_sse_server_with_status("200 OK", "text/event-stream", body);
+    let provider = OpenAiProvider::new(base_url, "test-model".into(), None, 5).expect("provider");
+
+    let (_, timings) = generate_candidates_parallel_traced(&provider, "prompt", 1)
+        .await
+        .expect("traced generation");
+
+    assert!(timings[0].response_headers.is_some());
+    assert!(timings[0].first_content.is_some());
+    assert!(timings[0].completed.is_some());
+    handle.join().expect("server thread");
 }
 
 #[tokio::test]

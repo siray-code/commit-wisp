@@ -17,7 +17,10 @@ use crate::{
     config::{global_config_path, CliOverrides, Config},
     git::GitRepo,
     prompt::{default_template, render_prompt, validate_template, PromptContext},
-    provider::{validate_endpoint, LlmProvider, OllamaProvider, OpenAiProvider},
+    provider::{
+        generate_candidates_parallel_traced, validate_endpoint, GenerationTiming, LlmProvider,
+        OllamaProvider, OpenAiProvider,
+    },
     secret::SecretStore,
     security::scan_sensitive,
     tui::{self, ReviewAction, ReviewInput},
@@ -54,6 +57,27 @@ fn report_phase(cli: &Cli, name: &str, elapsed: Duration, detail: Option<String>
             elapsed.as_secs_f64()
         ),
         None => eprintln!("commit-wisp: {name}: {:.2}s", elapsed.as_secs_f64()),
+    }
+}
+
+fn report_generation_timings(cli: &Cli, timings: &[GenerationTiming]) {
+    if !cli.verbose {
+        return;
+    }
+    for timing in timings {
+        let seconds = |duration: Option<Duration>| {
+            duration.map_or_else(
+                || "n/a".into(),
+                |value| format!("{:.2}s", value.as_secs_f64()),
+            )
+        };
+        eprintln!(
+            "commit-wisp: candidate #{}: headers={} first-content={} complete={}",
+            timing.request_index,
+            seconds(timing.response_headers),
+            seconds(timing.first_content),
+            seconds(timing.completed),
+        );
     }
 }
 
@@ -104,7 +128,7 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
         recent_commits: &recent,
         language: &config.language,
         format: &config.format,
-        candidate_count: config.candidates,
+        candidate_count: 1,
         extra_instruction: cli.prompt.as_deref(),
         custom_template: custom_template.as_deref(),
     })?;
@@ -144,29 +168,34 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
             None
         };
         let (candidates, models) = if interactive && models_cache.is_none() {
-            let models_future = provider.models();
+            let models_future = async {
+                let started = Instant::now();
+                (provider.models().await, started.elapsed())
+            };
             tokio::pin!(models_future);
-            let models_start = Instant::now();
             let (candidates, models_result) = tokio::join!(
-                provider.generate(&prompt, config.candidates),
+                generate_candidates_parallel_traced(provider.as_ref(), &prompt, config.candidates),
                 tokio::time::timeout(MODELS_GRACE, &mut models_future),
             );
             report_phase(
                 cli,
                 "models()",
-                models_start.elapsed(),
                 match &models_result {
-                    Ok(Ok(models)) => Some(format!("{} models", models.len())),
-                    Ok(Err(error)) => Some(format!("failed: {error}")),
+                    Ok((_, elapsed)) => *elapsed,
+                    Err(_) => MODELS_GRACE,
+                },
+                match &models_result {
+                    Ok((Ok(models), _)) => Some(format!("{} models", models.len())),
+                    Ok((Err(error), _)) => Some(format!("failed: {error}")),
                     Err(_) => Some("timed out; fell back".into()),
                 },
             );
             match models_result {
-                Ok(Ok(models)) => {
+                Ok((Ok(models), _)) => {
                     models_cache = Some(models.clone());
                     (candidates, models)
                 }
-                Ok(Err(_)) | Err(_) => (candidates, vec![config.model.clone()]),
+                Ok((Err(_), _)) | Err(_) => (candidates, vec![config.model.clone()]),
             }
         } else {
             let models = models_cache
@@ -180,14 +209,19 @@ async fn generate_and_review(cli: &Cli) -> Result<()> {
                 };
                 eprintln!("commit-wisp: models(): {detail}");
             }
-            (provider.generate(&prompt, config.candidates).await, models)
+            (
+                generate_candidates_parallel_traced(provider.as_ref(), &prompt, config.candidates)
+                    .await,
+                models,
+            )
         };
         if let Some(task) = progress {
             task.abort();
             eprint!("\r\x1b[2K");
             let _ = io::stderr().flush();
         }
-        let mut candidates = candidates?;
+        let (mut candidates, timings) = candidates?;
+        report_generation_timings(cli, &timings);
         report_phase(
             cli,
             "generate()",

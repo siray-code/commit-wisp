@@ -4,7 +4,7 @@ use std::{collections::HashSet, time::Duration};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use futures_util::StreamExt;
+use futures_util::{future::try_join_all, StreamExt};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -96,8 +96,106 @@ fn validate_candidate_count(candidates: Vec<Candidate>, expected: usize) -> Resu
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     async fn generate(&self, prompt: &str, count: usize) -> Result<Vec<Candidate>>;
+    async fn generate_traced(
+        &self,
+        prompt: &str,
+        count: usize,
+        timing: &mut GenerationTiming,
+    ) -> Result<Vec<Candidate>> {
+        let result = self.generate(prompt, count).await;
+        timing.complete();
+        result
+    }
     async fn models(&self) -> Result<Vec<String>>;
     fn model(&self) -> &str;
+}
+
+#[derive(Debug, Clone)]
+pub struct GenerationTiming {
+    pub request_index: usize,
+    pub response_headers: Option<Duration>,
+    pub first_content: Option<Duration>,
+    pub completed: Option<Duration>,
+    started: std::time::Instant,
+}
+
+impl GenerationTiming {
+    fn new(request_index: usize) -> Self {
+        Self {
+            request_index,
+            response_headers: None,
+            first_content: None,
+            completed: None,
+            started: std::time::Instant::now(),
+        }
+    }
+
+    fn mark_headers(&mut self) {
+        self.response_headers.get_or_insert(self.started.elapsed());
+    }
+
+    fn mark_first_content(&mut self) {
+        self.first_content.get_or_insert(self.started.elapsed());
+    }
+
+    fn complete(&mut self) {
+        self.completed.get_or_insert(self.started.elapsed());
+    }
+}
+
+pub async fn generate_candidates_parallel(
+    provider: &dyn LlmProvider,
+    prompt: &str,
+    count: usize,
+) -> Result<Vec<Candidate>> {
+    anyhow::ensure!(count > 0, "Candidate count must be greater than zero");
+
+    let batches = try_join_all((0..count).map(|index| {
+        let prompt = format!(
+            "{prompt}\n\nThis is candidate variation {} of {count}. Choose a materially distinct valid focus, scope, or level of detail from the other variations.",
+            index + 1
+        );
+        async move {
+            provider
+                .generate(&prompt, 1)
+                .await
+                .with_context(|| format!("Candidate request {} failed", index + 1))
+        }
+    }))
+    .await?;
+
+    let candidates: Vec<_> = batches.into_iter().flatten().collect();
+    validate_candidates(&candidates)?;
+    validate_candidate_count(candidates, count)
+}
+
+pub async fn generate_candidates_parallel_traced(
+    provider: &dyn LlmProvider,
+    prompt: &str,
+    count: usize,
+) -> Result<(Vec<Candidate>, Vec<GenerationTiming>)> {
+    anyhow::ensure!(count > 0, "Candidate count must be greater than zero");
+
+    let generated = try_join_all((0..count).map(|index| {
+        let prompt = format!(
+            "{prompt}\n\nThis is candidate variation {} of {count}. Choose a materially distinct valid focus, scope, or level of detail from the other variations.",
+            index + 1
+        );
+        async move {
+            let mut timing = GenerationTiming::new(index + 1);
+            let result = provider
+                .generate_traced(&prompt, 1, &mut timing)
+                .await
+                .with_context(|| format!("Candidate request {} failed", index + 1))?;
+            Ok::<_, anyhow::Error>((result, timing))
+        }
+    }))
+    .await?;
+
+    let (batches, timings): (Vec<_>, Vec<_>) = generated.into_iter().unzip();
+    let candidates: Vec<_> = batches.into_iter().flatten().collect();
+    validate_candidates(&candidates)?;
+    Ok((validate_candidate_count(candidates, count)?, timings))
 }
 
 pub struct OpenAiProvider {
@@ -235,6 +333,54 @@ impl LlmProvider for OpenAiProvider {
         validate_candidate_count(candidates, count)
     }
 
+    async fn generate_traced(
+        &self,
+        prompt: &str,
+        count: usize,
+        timing: &mut GenerationTiming,
+    ) -> Result<Vec<Candidate>> {
+        let prompt = candidate_prompt(prompt, count);
+        let body = OpenAiRequest {
+            model: &self.model,
+            messages: vec![Message {
+                role: "user",
+                content: &prompt,
+            }],
+            temperature: 0.2,
+            stream: true,
+        };
+        let request = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&body);
+        let response = self
+            .authenticated(request)
+            .send()
+            .await
+            .context("Could not reach OpenAI-compatible provider")?;
+        timing.mark_headers();
+        let response = ensure_success(response).await?;
+        let content = if is_streaming_content_type(&response) {
+            consume_sse_traced(response, timing)
+                .await
+                .context("Failed to read streaming response; provider may not support SSE")?
+        } else {
+            let response: OpenAiResponse = response
+                .json()
+                .await
+                .context("Invalid OpenAI-compatible response")?;
+            timing.mark_first_content();
+            let mut content = String::new();
+            for choice in response.choices {
+                content.push_str(&choice.message.content);
+            }
+            content
+        };
+        let candidates = parse_candidates(&content)?;
+        timing.complete();
+        validate_candidate_count(candidates, count)
+    }
+
     async fn models(&self) -> Result<Vec<String>> {
         let request = self.client.get(format!("{}/models", self.base_url));
         let response = self.authenticated(request).send().await?;
@@ -335,6 +481,45 @@ impl LlmProvider for OllamaProvider {
         validate_candidate_count(candidates, count)
     }
 
+    async fn generate_traced(
+        &self,
+        prompt: &str,
+        count: usize,
+        timing: &mut GenerationTiming,
+    ) -> Result<Vec<Candidate>> {
+        let prompt = candidate_prompt(prompt, count);
+        let body = OllamaRequest {
+            model: &self.model,
+            messages: vec![Message {
+                role: "user",
+                content: &prompt,
+            }],
+            stream: true,
+            format: "json",
+        };
+        let response = self
+            .client
+            .post(format!("{}/api/chat", self.base_url))
+            .json(&body)
+            .send()
+            .await?;
+        timing.mark_headers();
+        let response = ensure_success(response).await?;
+        let content = if is_streaming_content_type(&response) {
+            consume_ndjson_traced(response, timing)
+                .await
+                .context("Failed to read streaming response; provider may not support streaming")?
+        } else {
+            let response: OllamaResponse =
+                response.json().await.context("Invalid Ollama response")?;
+            timing.mark_first_content();
+            response.message.content
+        };
+        let candidates = parse_candidates(&content)?;
+        timing.complete();
+        validate_candidate_count(candidates, count)
+    }
+
     async fn models(&self) -> Result<Vec<String>> {
         let response = self
             .client
@@ -393,6 +578,20 @@ fn is_streaming_content_type(response: &reqwest::Response) -> bool {
 /// Accumulates `data:` payloads of a server-sent event stream until `[DONE]`
 /// or end of stream.
 async fn consume_sse(response: reqwest::Response) -> Result<String> {
+    consume_sse_inner(response, None).await
+}
+
+async fn consume_sse_traced(
+    response: reqwest::Response,
+    timing: &mut GenerationTiming,
+) -> Result<String> {
+    consume_sse_inner(response, Some(timing)).await
+}
+
+async fn consume_sse_inner(
+    response: reqwest::Response,
+    mut timing: Option<&mut GenerationTiming>,
+) -> Result<String> {
     let mut content = String::new();
     let mut buffer = SseLineBuffer::default();
     let mut stream = response.bytes_stream();
@@ -412,6 +611,11 @@ async fn consume_sse(response: reqwest::Response) -> Result<String> {
                     .first()
                     .and_then(|choice| choice.delta.content.as_deref())
                 {
+                    if !delta.is_empty() {
+                        if let Some(timing) = timing.as_deref_mut() {
+                            timing.mark_first_content();
+                        }
+                    }
                     content.push_str(delta);
                 }
             }
@@ -424,6 +628,20 @@ async fn consume_sse(response: reqwest::Response) -> Result<String> {
 /// Accumulates `message.content` of an Ollama NDJSON stream until `done` or
 /// end of stream.
 async fn consume_ndjson(response: reqwest::Response) -> Result<String> {
+    consume_ndjson_inner(response, None).await
+}
+
+async fn consume_ndjson_traced(
+    response: reqwest::Response,
+    timing: &mut GenerationTiming,
+) -> Result<String> {
+    consume_ndjson_inner(response, Some(timing)).await
+}
+
+async fn consume_ndjson_inner(
+    response: reqwest::Response,
+    mut timing: Option<&mut GenerationTiming>,
+) -> Result<String> {
     let mut content = String::new();
     let mut buffer = SseLineBuffer::default();
     let mut stream = response.bytes_stream();
@@ -432,6 +650,11 @@ async fn consume_ndjson(response: reqwest::Response) -> Result<String> {
         for line in buffer.push(&chunk) {
             if let Ok(chunk) = serde_json::from_str::<OllamaStreamChunk>(line.trim()) {
                 if let Some(message) = chunk.message.as_ref() {
+                    if !message.content.is_empty() {
+                        if let Some(timing) = timing.as_deref_mut() {
+                            timing.mark_first_content();
+                        }
+                    }
                     content.push_str(&message.content);
                 }
                 if chunk.done {
