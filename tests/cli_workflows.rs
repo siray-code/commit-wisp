@@ -123,6 +123,8 @@ fn verbose_reports_phase_timings_on_stderr() {
         .success()
         .stderr(predicate::str::contains("commit-wisp: generate("))
         .stderr(predicate::str::contains("candidate #1: headers="))
+        .stderr(predicate::str::contains("first-byte="))
+        .stderr(predicate::str::contains("first-reasoning="))
         .stderr(predicate::str::contains("first-content="))
         .stderr(predicate::str::contains("commit-wisp: models(): skipped"))
         .stderr(predicate::str::contains("commit-wisp: total"));

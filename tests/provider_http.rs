@@ -153,7 +153,7 @@ async fn traced_openai_stream_records_headers_first_content_and_completion() {
     let candidates = r#"{"candidates":[{"subject":"feat: trace stream","body":null}]}"#;
     let content = serde_json::to_string(candidates).expect("encode content");
     let body = format!(
-        "data: {{\"choices\":[{{\"delta\":{{\"content\":{content}}}}}]}}\n\ndata: [DONE]\n\n"
+        "data: {{\"choices\":[{{\"delta\":{{\"reasoning_content\":\"thinking\"}}}}]}}\n\ndata: {{\"choices\":[{{\"delta\":{{\"content\":{content}}}}}]}}\n\ndata: [DONE]\n\n"
     );
     let (base_url, handle) = mock_sse_server_with_status("200 OK", "text/event-stream", body);
     let provider = OpenAiProvider::new(base_url, "test-model".into(), None, 5).expect("provider");
@@ -163,6 +163,8 @@ async fn traced_openai_stream_records_headers_first_content_and_completion() {
         .expect("traced generation");
 
     assert!(timings[0].response_headers.is_some());
+    assert!(timings[0].first_byte.is_some());
+    assert!(timings[0].first_reasoning.is_some());
     assert!(timings[0].first_content.is_some());
     assert!(timings[0].completed.is_some());
     handle.join().expect("server thread");
