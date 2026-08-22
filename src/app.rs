@@ -72,9 +72,11 @@ fn report_generation_timings(cli: &Cli, timings: &[GenerationTiming]) {
             )
         };
         eprintln!(
-            "commit-wisp: candidate #{}: headers={} first-content={} complete={}",
+            "commit-wisp: candidate #{}: headers={} first-byte={} first-reasoning={} first-content={} complete={}",
             timing.request_index,
             seconds(timing.response_headers),
+            seconds(timing.first_byte),
+            seconds(timing.first_reasoning),
             seconds(timing.first_content),
             seconds(timing.completed),
         );

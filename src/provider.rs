@@ -114,6 +114,8 @@ pub trait LlmProvider: Send + Sync {
 pub struct GenerationTiming {
     pub request_index: usize,
     pub response_headers: Option<Duration>,
+    pub first_byte: Option<Duration>,
+    pub first_reasoning: Option<Duration>,
     pub first_content: Option<Duration>,
     pub completed: Option<Duration>,
     started: std::time::Instant,
@@ -124,6 +126,8 @@ impl GenerationTiming {
         Self {
             request_index,
             response_headers: None,
+            first_byte: None,
+            first_reasoning: None,
             first_content: None,
             completed: None,
             started: std::time::Instant::now(),
@@ -136,6 +140,14 @@ impl GenerationTiming {
 
     fn mark_first_content(&mut self) {
         self.first_content.get_or_insert(self.started.elapsed());
+    }
+
+    fn mark_first_byte(&mut self) {
+        self.first_byte.get_or_insert(self.started.elapsed());
+    }
+
+    fn mark_first_reasoning(&mut self) {
+        self.first_reasoning.get_or_insert(self.started.elapsed());
     }
 
     fn complete(&mut self) {
@@ -287,6 +299,8 @@ struct OpenAiStreamChoice {
 struct OpenAiStreamDelta {
     #[serde(default)]
     content: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[async_trait]
@@ -597,6 +611,9 @@ async fn consume_sse_inner(
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("Stream interrupted")?;
+        if let Some(timing) = timing.as_deref_mut() {
+            timing.mark_first_byte();
+        }
         for line in buffer.push(&chunk) {
             let Some(data) = line.strip_prefix("data:") else {
                 continue;
@@ -606,6 +623,16 @@ async fn consume_sse_inner(
                 return Ok(content);
             }
             if let Ok(chunk) = serde_json::from_str::<OpenAiStreamChunk>(data) {
+                if chunk
+                    .choices
+                    .first()
+                    .and_then(|choice| choice.delta.reasoning_content.as_deref())
+                    .is_some_and(|reasoning| !reasoning.is_empty())
+                {
+                    if let Some(timing) = timing.as_deref_mut() {
+                        timing.mark_first_reasoning();
+                    }
+                }
                 if let Some(delta) = chunk
                     .choices
                     .first()
@@ -647,6 +674,9 @@ async fn consume_ndjson_inner(
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.context("Stream interrupted")?;
+        if let Some(timing) = timing.as_deref_mut() {
+            timing.mark_first_byte();
+        }
         for line in buffer.push(&chunk) {
             if let Ok(chunk) = serde_json::from_str::<OllamaStreamChunk>(line.trim()) {
                 if let Some(message) = chunk.message.as_ref() {
